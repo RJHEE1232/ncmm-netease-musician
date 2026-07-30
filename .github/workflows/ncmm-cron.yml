@@ -1,4 +1,4 @@
-# Public-friendly: secrets only; redact PII; secondary via jar file (bypass broken login)
+# Public-friendly: secondary via jar clone+swap (bypass broken secondary login)
 name: ncmm-musician-cron
 
 on:
@@ -71,16 +71,13 @@ jobs:
       - name: Prepare data dir
         env:
           SONG_IDS: ${{ secrets.SONG_IDS }}
-          SECONDARY_MUSIC_U: ${{ secrets.SECONDARY_MUSIC_U }}
         run: |
           mkdir -p data
           cp configs/config.gha.yaml data/config.yaml
           cp configs/notify.hf.yaml data/notify.yaml
           python3 <<'PY'
-          import os, re, json
+          import os, re
           from pathlib import Path
-          from datetime import datetime, timezone, timedelta
-
           p = Path("data/config.yaml")
           t = p.read_text(encoding="utf-8")
           ids = os.environ["SONG_IDS"].strip()
@@ -98,65 +95,16 @@ jobs:
           )
           if n != 1:
               raise SystemExit("failed to inject playids.ids")
-
-          sec = (os.environ.get("SECONDARY_MUSIC_U") or "").strip()
-          if sec:
-              if sec.startswith("MUSIC_U="):
-                  sec = sec.split("=", 1)[1].strip()
-              now = datetime.now(timezone.utc)
-              exp = now + timedelta(days=3650)
-
-              def ent(domain: str, host_only: bool = False):
-                  return {
-                      "Name": "MUSIC_U",
-                      "Value": sec,
-                      "Domain": domain,
-                      "Path": "/",
-                      "SameSite": "",
-                      "Secure": True,
-                      "HttpOnly": True,
-                      "Persistent": True,
-                      "HostOnly": host_only,
-                      "Expires": exp.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                      "Creation": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                      "LastAccess": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                      "SeqNum": 1,
-                  }
-
-              # ncmm cookie jar format: map[domain]map[name]Entry
-              jar = {
-                  "163.com": {"MUSIC_U": ent(".163.com", False)},
-                  "music.163.com": {"MUSIC_U": ent("music.163.com", True)},
-              }
-              Path("data/fan1.json").write_text(
-                  json.dumps(jar, ensure_ascii=False), encoding="utf-8"
-              )
-              t2 = re.sub(
-                  r"(?m)^(\s*secondary:\s*).*(?:\n\s*-\s*\"[^\"]+\")*",
-                  r'\1\n    - "./fan1.json"',
-                  t2,
-                  count=1,
-              )
-              if '"./fan1.json"' not in t2:
-                  t2 = t2.replace(
-                      "secondary: []",
-                      'secondary:\n    - "./fan1.json"',
-                      1,
-                  )
-              t2 = t2.replace("enableMain: false", "enableMain: true")
-              print("secondary jar written (bypass login CLI)")
-          else:
-              t2 = re.sub(
-                  r"(?m)^(\s*secondary:\s*).*(?:\n\s*-\s*\"[^\"]+\")*",
-                  r"\1[]",
-                  t2,
-                  count=1,
-              )
-              t2 = t2.replace("enableMain: false", "enableMain: true")
-              print("no secondary secret; main self-play only")
-
+          # secondary filled after main login (need real jar template)
+          t2 = re.sub(
+              r"(?m)^(\s*secondary:\s*).*(?:\n\s*-\s*\"[^\"]+\")*",
+              r"\1[]",
+              t2,
+              count=1,
+          )
+          t2 = t2.replace("enableMain: false", "enableMain: true")
           p.write_text(t2, encoding="utf-8")
-          print("config ready")
+          print("config prepared (secondary pending)")
           PY
 
       - name: Login main
@@ -184,12 +132,85 @@ jobs:
             found=$(find data -name 'cookie.json' 2>/dev/null | head -1 || true)
             if [ -n "$found" ]; then cp "$found" data/cookie.json; fi
           fi
-          test -f data/cookie.json || { echo "::error::no cookie.json"; ls -la data || true; exit 1; }
+          test -f data/cookie.json || { echo "::error::no cookie.json"; exit 1; }
           echo "main login ok bytes=$(wc -c < data/cookie.json)"
           rm -f data/login.log
-          if [ -f data/fan1.json ]; then
-            echo "secondary jar present bytes=$(wc -c < data/fan1.json)"
+
+      - name: Build secondary jar from main template
+        env:
+          SECONDARY_MUSIC_U: ${{ secrets.SECONDARY_MUSIC_U }}
+        run: |
+          set +x
+          if [ -z "${SECONDARY_MUSIC_U}" ]; then
+            echo "no secondary secret; main-only play"
+            exit 0
           fi
+          case "${SECONDARY_MUSIC_U}" in
+            *MUSIC_U=*) SEC="${SECONDARY_MUSIC_U#MUSIC_U=}" ;;
+            *) SEC="${SECONDARY_MUSIC_U}" ;;
+          esac
+          export SEC
+          python3 - <<'PY'
+          import os, json, re
+          from pathlib import Path
+          from copy import deepcopy
+
+          sec = os.environ.get("SEC", "").strip()
+          if not sec:
+              raise SystemExit("empty SEC")
+          main_path = Path("data/cookie.json")
+          raw = json.loads(main_path.read_text(encoding="utf-8"))
+          fan = deepcopy(raw)
+          replaced = 0
+          # jar is map[domain]map[cookieName]Entry
+          if isinstance(fan, dict):
+              for domain, cookies in fan.items():
+                  if not isinstance(cookies, dict):
+                      continue
+                  for name, ent in list(cookies.items()):
+                      if not isinstance(ent, dict):
+                          continue
+                      if ent.get("Name") == "MUSIC_U" or name == "MUSIC_U":
+                          ent["Value"] = sec
+                          ent["Name"] = "MUSIC_U"
+                          cookies[name] = ent
+                          replaced += 1
+              if replaced == 0:
+                  # inject MUSIC_U into every domain bucket
+                  for domain, cookies in fan.items():
+                      if isinstance(cookies, dict):
+                          sample = next(iter(cookies.values())) if cookies else {
+                              "Path": "/", "Secure": True, "HttpOnly": True,
+                              "Persistent": True, "HostOnly": False,
+                              "Domain": domain, "SameSite": "",
+                          }
+                          ent = dict(sample) if isinstance(sample, dict) else {}
+                          ent.update({"Name": "MUSIC_U", "Value": sec, "Path": ent.get("Path") or "/"})
+                          cookies["MUSIC_U"] = ent
+                          replaced += 1
+          Path("data/fan1.json").write_text(
+              json.dumps(fan, ensure_ascii=False), encoding="utf-8"
+          )
+          print(f"secondary jar built from main template, music_u fields={replaced}")
+
+          cfg = Path("data/config.yaml")
+          t = cfg.read_text(encoding="utf-8")
+          t2 = re.sub(
+              r"(?m)^[ 	]*secondary:[ 	]*(?:\[\][ 	]*)?(?:
+[ 	]*-[ 	]*\"[^\"]+\")*",
+              '  secondary:
+    - "./fan1.json"
+    - "./cookie.json"',
+              t,
+              count=1,
+          )
+          if '"./fan1.json"' not in t2:
+              raise SystemExit("failed to set secondary list")
+          t2 = t2.replace("enableMain: false", "enableMain: true")
+          cfg.write_text(t2, encoding="utf-8")
+          print("config secondary: fan1 + main fallback")
+          PY
+          echo "secondary jar bytes=$(wc -c < data/fan1.json)"
 
       - name: Resolve command
         id: cmd
