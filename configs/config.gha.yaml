@@ -1,0 +1,151 @@
+# HF 精简配置：开音乐人月度 VIP，关重任务 / 需 antiCheatToken 的任务
+version: 1.1.11
+
+accounts:
+  main: "./cookie.json"
+  secondary: []
+  antiCheatTokens:
+    "./cookie.json": ""
+
+task:
+  sign: true
+  playids: false
+  musician-sign: true
+  # 月度 VIP 进阶（发笔记、刷播放）—— HF 部署必须打开
+  musician-vip: true
+  note: false
+  daily-song-share: false
+  vip-member-gift: false
+  fansgroup: false
+  mode: "by-task-group"
+  fast_tasks:
+    - VipTask
+    - Reserve
+    - ViewVipCenter
+    - LikeComment
+    - FollowArtist
+    - LikeSong
+    - CollectSong
+    - musician-sign
+  slow_tasks:
+    - musician-vip
+
+network:
+  debug: false
+  timeout: 60s
+  retry: 3
+  user_agent:
+    default: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) NeteaseMusicDesktop/2.3.17.1034"
+    weapi: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) NeteaseMusicDesktop/2.3.17.1034"
+    eapi: "NeteaseMusic 9.4.95/6806 (iPhone; iOS 16.6.1; zh_CN)"
+    xeapi: ""
+
+playids:
+  enableMain: false
+  enableSecondaries: false
+  daily_min: 40
+  daily_max: 100
+  run_min: 20
+  run_max: 40
+  gap_min: 0
+  gap_max: 5
+  ids: "3366663042,3373818852,3373845775,3372894655,3372989897"
+  idsFile: []
+
+sign:
+  automatic: true
+  enableMain: true
+  enableSecondaries: false
+  enableVipTask: true
+  yunbeiTask:
+    enableViewVipCenter: true
+    enableLikeComment: true
+    enableListenIndie: false
+    enableReserve: true
+    enableFollowArtist: true
+    enableLikeSong: true
+    enableCollectSong: true
+    enablePublishNote: false
+    enablePlayDailyRecommend: false
+
+mixPlay:
+  enabled: true
+  dailyRecommendRatio: 0.3
+  countTarget: false
+
+note:
+  titles:
+    - "今日音乐分享"
+    - "音乐人的日常"
+    - "分享好听的歌"
+  messages:
+    - "穿梭在拥挤的人潮里，耳机隔开外界的喧闹，一首喜欢的歌，就是奔波路上最安稳的小港湾。"
+    - "生活难免有疲惫和委屈，好在总有动听的音乐相伴，一点点抚平心底积攒下来的负面情绪。"
+    - "暂时抛开生活里的琐碎压力，寻一处角落静静听歌，让思绪跟着音符漫无目的地自由飘荡。"
+  imageUrls:
+    - "https://picsum.photos/800/600"
+  type: 39
+  autoDelete: true
+
+dailySongShare:
+  enableMain: false
+  enableSecondaries: false
+  songId: ""
+  playlistId: "13848930701"
+
+musician:
+  enableMain: true
+  enableSecondaries: false
+  identityCacheDays: 0
+  enableVipNote: true
+  enableVipPlay: true
+  play:
+    ids: ""
+    idsFile: []
+    run_min: 0
+    run_max: 0
+    gap_min: 0
+    gap_max: 0
+
+fansgroup:
+  enableMain: false
+  enableSecondaries: false
+  groupIds: []
+
+vipMemberGift:
+  enableMain: false
+  enableSecondaries: false
+  enableGift: false
+  enableClaim: false
+  cloud:
+    baseUrl: ""
+    token: ""
+
+notify:
+  enabled: false
+  on_skip: false
+  title_prefix: "ncmm-hf"
+  timeout: 10s
+  file: "notify.yaml"
+
+log:
+  app: ncm
+  format: text
+  level: info
+  stdout: true
+  rotate:
+    filename: "./log/ncm.log"
+    maxsize: 100
+    maxage: 7
+    maxbackups: 3
+    localtime: true
+    compress: true
+
+database:
+  driver: badger
+  path: "./database/badger/"
+
+updater:
+  check: false
+  auto_update: false
+

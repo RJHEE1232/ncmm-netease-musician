@@ -1,11 +1,11 @@
-# Public-friendly: secrets only; scrub cookies; minimal permissions
+# Public-friendly: secrets only; live filtered logs; short play batches for Actions
 name: ncmm-musician-cron
 
 on:
   schedule:
-    # UTC 00:30 ≈ Beijing 08:30 → task
+    # UTC 00:30 ≈ Beijing 08:30 → task（日常，通常较快）
     - cron: "30 0 * * *"
-    # UTC 06:00 ≈ Beijing 14:00 → musician (monthly VIP advanced)
+    # UTC 06:00 ≈ Beijing 14:00 → musician（含少量播放）
     - cron: "0 6 * * *"
   workflow_dispatch:
     inputs:
@@ -19,6 +19,7 @@ on:
           - task
           - sign
           - musician-vip
+          - musician-sign
 
 permissions:
   contents: read
@@ -30,8 +31,8 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-    # Change this if your public repo path differs
+    # 每首真实等待时长，5 首也可能 20～30 分钟；留余量
+    timeout-minutes: 60
     if: github.repository == '<owner>/ncmm-netease-musician'
 
     steps:
@@ -45,18 +46,18 @@ jobs:
           MUSIC_U: ${{ secrets.MUSIC_U }}
         run: |
           if [ -z "${MUSIC_U}" ]; then
-            echo "::error::Secret MUSIC_U is empty. Settings → Secrets and variables → Actions."
+            echo "::error::Secret MUSIC_U is empty."
             exit 1
           fi
           echo "::add-mask::${MUSIC_U}"
-          TOKEN="${MUSIC_U#MUSIC_U=}"
-          echo "::add-mask::${TOKEN}"
+          echo "::add-mask::${MUSIC_U#MUSIC_U=}"
           echo "Secret present (masked). length=${#MUSIC_U}"
 
       - name: Prepare data dir
         run: |
           mkdir -p data
-          cp configs/config.hf.yaml data/config.yaml
+          # Actions 用少播放配置，避免超时
+          cp configs/config.gha.yaml data/config.yaml
           cp configs/notify.hf.yaml data/notify.yaml
 
       - name: Login (cookie never printed)
@@ -75,14 +76,11 @@ jobs:
             -c /data/config.yaml login cookie "$C" -m \
             > data/login.log 2>&1 || {
               echo "::error::login failed (details redacted)"
-              grep -v -iE 'cookie|music_u|token|password|authorization' data/login.log | tail -n 30 || true
-              rm -f data/login.log data/cookie.json
+              grep -v -iE 'cookie|music_u|token|password|authorization' data/login.log | tail -n 40 || true
+              rm -f data/login.log data/cookie.json || true
               exit 1
             }
-          if [ ! -f data/cookie.json ]; then
-            echo "::error::login did not produce cookie.json"
-            exit 1
-          fi
+          test -f data/cookie.json || { echo "::error::no cookie.json"; exit 1; }
           echo "login ok; cookie file bytes=$(wc -c < data/cookie.json)"
           rm -f data/login.log
 
@@ -97,32 +95,38 @@ jobs:
             echo "value=task" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Run ncmm
+      - name: Run ncmm (live filtered logs)
         run: |
           set +x
           CMD="${{ steps.cmd.outputs.value }}"
           case "$CMD" in
-            musician|task|sign|musician-vip) ;;
+            musician|task|sign|musician-vip|musician-sign) ;;
             *) echo "::error::invalid command"; exit 1 ;;
           esac
-          echo "running: ncmm $CMD"
+          echo "running: ncmm $CMD (live log; secrets masked)"
+          # 实时输出；过滤敏感词；进度条 \r 转成换行方便 Actions 显示
+          set +e
           docker run --rm \
             -v "$PWD/data:/data" \
             --entrypoint /usr/local/bin/ncmm \
             ghcr.io/3899/ncmm:latest \
-            -c /data/config.yaml "$CMD" \
-            > data/run.log 2>&1
-          STATUS=$?
-          grep -v -iE 'cookie|music_u|token=|password|authorization|MUSIC_U' data/run.log | tail -n 200 || true
-          if [ $STATUS -ne 0 ]; then
-            echo "::error::ncmm $CMD exit=$STATUS"
-            exit $STATUS
+            -c /data/config.yaml "$CMD" 2>&1 \
+            | tr '\r' '\n' \
+            | grep -v -iE 'cookie|music_u|token=|password|authorization|MUSIC_U' \
+            | tee data/run.filtered.log
+          STATUS=${PIPESTATUS[0]}
+          set -e
+          if [ "${STATUS}" -ne 0 ]; then
+            echo "::error::ncmm $CMD exit=${STATUS}"
+            exit "${STATUS}"
           fi
           echo "ncmm $CMD finished ok"
 
       - name: Scrub workspace
         if: always()
         run: |
-          rm -rf data
+          # 容器可能以 root 写 log/database，用 docker 删最干净
+          docker run --rm -v "$PWD/data:/data" --entrypoint /bin/sh ghcr.io/3899/ncmm:latest -c 'rm -rf /data/* /data/.[!.]* 2>/dev/null || true' || true
+          rm -rf data 2>/dev/null || sudo rm -rf data || true
           mkdir -p data
-          echo "workspace scrubbed (no cookie artifacts)"
+          echo "workspace scrubbed"
