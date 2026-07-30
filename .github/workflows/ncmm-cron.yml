@@ -1,4 +1,4 @@
-# Public-friendly: secrets only; redact song titles/ids and nicknames in logs
+# Public-friendly: secrets only; redact song titles/ids/nicks in logs
 name: ncmm-musician-cron
 
 on:
@@ -42,7 +42,6 @@ jobs:
         env:
           MUSIC_U: ${{ secrets.MUSIC_U }}
           SONG_IDS: ${{ secrets.SONG_IDS }}
-          SECONDARY_MUSIC_U: ${{ secrets.SECONDARY_MUSIC_U }}
         run: |
           if [ -z "${MUSIC_U}" ]; then
             echo "::error::Secret MUSIC_U is empty."
@@ -55,13 +54,6 @@ jobs:
           echo "::add-mask::${MUSIC_U}"
           echo "::add-mask::${MUSIC_U#MUSIC_U=}"
           echo "::add-mask::${SONG_IDS}"
-          if [ -n "${SECONDARY_MUSIC_U}" ]; then
-            echo "::add-mask::${SECONDARY_MUSIC_U}"
-            echo "::add-mask::${SECONDARY_MUSIC_U#MUSIC_U=}"
-            echo "secondary_cookie=yes"
-          else
-            echo "secondary_cookie=no (will self-play on main)"
-          fi
           echo "${SONG_IDS}" | tr ',;' '\n' | while read -r id; do
             id=$(echo "$id" | tr -d '[:space:]')
             [ -n "$id" ] && echo "::add-mask::${id}"
@@ -71,14 +63,14 @@ jobs:
       - name: Prepare data dir
         env:
           SONG_IDS: ${{ secrets.SONG_IDS }}
-          SECONDARY_MUSIC_U: ${{ secrets.SECONDARY_MUSIC_U }}
         run: |
           mkdir -p data
           cp configs/config.gha.yaml data/config.yaml
           cp configs/notify.hf.yaml data/notify.yaml
           python3 <<'PY'
-          import os, re, pathlib
-          p = pathlib.Path("data/config.yaml")
+          import os, re
+          from pathlib import Path
+          p = Path("data/config.yaml")
           t = p.read_text(encoding="utf-8")
           ids = os.environ["SONG_IDS"].strip()
           if not re.fullmatch(r"[0-9,\s;]+", ids):
@@ -95,19 +87,11 @@ jobs:
           )
           if n != 1:
               raise SystemExit("failed to inject playids.ids")
-          # 强制空 secondary；辅助登录成功后再写入 fan1
-          t2 = re.sub(
-              r"secondary:\s*(?:\[\]|
-(?:\s*-\s*\"[^\"]+\"\s*
-?)+)",
-              "secondary: []
-",
-              t2,
-              count=1,
-          )
-          t2 = t2.replace("enableMain: false", "enableMain: true", 1)
+          # main self-play only (secondary login panics in upstream ncmm)
+          t2 = re.sub(r"(?m)^(\s*secondary:\s*).*(?:\n\s*-\s*\"[^\"]+\")*", r"\1[]", t2, count=1)
+          t2 = t2.replace("enableMain: false", "enableMain: true")
           p.write_text(t2, encoding="utf-8")
-          print("playids injected; secondary starts empty")
+          print("config ready: main self-play, song ids injected")
           PY
 
       - name: Login main
@@ -119,8 +103,6 @@ jobs:
             *MUSIC_U=*) C="${MUSIC_U}" ;;
             *) C="MUSIC_U=${MUSIC_U}" ;;
           esac
-          # 注意：ncmm 的 --format header + -f 有 bug（读的是空 args）
-          # 用位置参数 --format header 'MUSIC_U=...' -m（主号已验证可过）
           docker run --rm \
             -v "$PWD/data:/data" \
             -w /data \
@@ -133,7 +115,6 @@ jobs:
               rm -f data/login.log data/cookie.json || true
               exit 1
             }
-          # cookie 可能在 /data/cookie.json 或 accounts.main 路径
           if [ ! -f data/cookie.json ]; then
             found=$(find data -name 'cookie.json' 2>/dev/null | head -1 || true)
             if [ -n "$found" ]; then cp "$found" data/cookie.json; fi
@@ -141,93 +122,6 @@ jobs:
           test -f data/cookie.json || { echo "::error::no cookie.json"; ls -la data || true; exit 1; }
           echo "main login ok bytes=$(wc -c < data/cookie.json)"
           rm -f data/login.log
-
-      - name: Login secondary (optional)
-        env:
-          SECONDARY_MUSIC_U: ${{ secrets.SECONDARY_MUSIC_U }}
-        run: |
-          set +x
-          clear_secondary() {
-            python3 - <<'PY'
-          from pathlib import Path
-          import re
-          p = Path("data/config.yaml")
-          t = p.read_text(encoding="utf-8")
-          t = re.sub(
-              r"secondary:\s*(?:\[\]|
-(?:\s*-\s*\"[^\"]+\"\s*
-?)+)",
-              "secondary: []
-",
-              t,
-              count=1,
-          )
-          t = t.replace("enableMain: false", "enableMain: true")
-          p.write_text(t, encoding="utf-8")
-          print("config: secondary cleared, main play enabled")
-          PY
-          }
-
-          if [ -z "${SECONDARY_MUSIC_U}" ]; then
-            echo "skip secondary login"
-            clear_secondary
-            exit 0
-          fi
-          case "${SECONDARY_MUSIC_U}" in
-            *MUSIC_U=*) C="${SECONDARY_MUSIC_U}" ;;
-            *) C="MUSIC_U=${SECONDARY_MUSIC_U}" ;;
-          esac
-          # 与主号相同写法（仅去掉 -m）；-o 在部分版本会触发 cobra panic，故不传 -o
-          set +e
-          docker run --rm \
-            -v "$PWD/data:/data" \
-            -w /data \
-            --entrypoint /usr/local/bin/ncmm \
-            ghcr.io/3899/ncmm:latest \
-            --home /data -c /data/config.yaml login cookie --format header "$C" \
-            > data/login2.log 2>&1
-          RC=$?
-          set -e
-          if [ "$RC" -ne 0 ]; then
-            echo "::warning::secondary login failed — main-only play"
-            grep -v -iE 'cookie|music_u|token|password|authorization|songid|歌名|昵称' data/login2.log | tail -n 40 || true
-            rm -f data/login2.log
-            clear_secondary
-            exit 0
-          fi
-          rm -f data/login2.log
-          # 辅助默认 fan_<uid>.json
-          extra=$(find data -maxdepth 3 \( -name 'fan_*.json' -o -name 'fan1.json' -o -name 'temp_cookie.json' \) 2>/dev/null | head -5 || true)
-          echo "secondary cookie candidates: $(echo "$extra" | tr '\n' ' ')"
-          target=""
-          for f in $extra; do
-            case "$f" in
-              *cookie.json) continue ;;
-              *) target="$f"; break ;;
-            esac
-          done
-          if [ -z "$target" ]; then
-            # 任意非 main 的 json
-            target=$(find data -maxdepth 3 -name '*.json' ! -name 'cookie.json' 2>/dev/null | head -1 || true)
-          fi
-          if [ -n "$target" ] && [ -f "$target" ]; then
-            cp "$target" data/fan1.json
-            # 确保 config 指向 fan1
-            python3 <<'PY'
-          from pathlib import Path
-          import re
-          p = Path("data/config.yaml")
-          t = p.read_text(encoding="utf-8")
-          if '"./fan1.json"' not in t:
-              t = re.sub(r"secondary:\s*\[\]", 'secondary:\n    - "./fan1.json"', t, count=1)
-          p.write_text(t, encoding="utf-8")
-          print("secondary ready -> fan1.json")
-          PY
-            echo "secondary login ok"
-          else
-            echo "::warning::secondary file missing — main-only play"
-            clear_secondary
-          fi
 
       - name: Resolve command
         id: cmd
@@ -260,7 +154,6 @@ jobs:
               if part.isdigit():
                   ids.append(part)
           ids.sort(key=len, reverse=True)
-          # plain quotes and JSON-escaped quotes from slog
           title_re = re.compile(r'歌名=(?:"[^"]*"|\\"[^\\"]*\\")')
           nick_re = re.compile(r'昵称=(?:"[^"]*"|\\"[^\\"]*\\")')
           songid_re = re.compile(r"songId=\S+")
