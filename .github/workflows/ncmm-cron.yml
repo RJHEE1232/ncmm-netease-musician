@@ -113,17 +113,21 @@ jobs:
             *MUSIC_U=*) C="${MUSIC_U}" ;;
             *) C="MUSIC_U=${MUSIC_U}" ;;
           esac
+          # header 文件导入，避免超长 CLI 参数触发 cobra nil panic
+          printf '%s' "$C" > data/main.header
           docker run --rm \
             -v "$PWD/data:/data" \
+            -w /data \
             --entrypoint /usr/local/bin/ncmm \
             ghcr.io/3899/ncmm:latest \
-            -c /data/config.yaml login cookie "$C" -m \
+            --home /data -c /data/config.yaml login cookie --format header -f /data/main.header -o cookie.json -m \
             > data/login.log 2>&1 || {
               echo "::error::main login failed"
-              grep -v -iE 'cookie|music_u|token|password|authorization|songid|歌名|昵称' data/login.log | tail -n 40 || true
-              rm -f data/login.log data/cookie.json || true
+              grep -v -iE 'cookie|music_u|token|password|authorization|songid|歌名|昵称' data/login.log | tail -n 60 || true
+              rm -f data/login.log data/main.header data/cookie.json || true
               exit 1
             }
+          rm -f data/main.header
           test -f data/cookie.json || { echo "::error::no cookie.json"; exit 1; }
           echo "main login ok"
           rm -f data/login.log
@@ -141,40 +145,31 @@ jobs:
             *MUSIC_U=*) C="${SECONDARY_MUSIC_U}" ;;
             *) C="MUSIC_U=${SECONDARY_MUSIC_U}" ;;
           esac
+          # 官方：header 文件 + -o fan1.json；不要 -m（默认辅助号）
+          printf '%s' "$C" > data/fan1.header
           docker run --rm \
             -v "$PWD/data:/data" \
+            -w /data \
             --entrypoint /usr/local/bin/ncmm \
             ghcr.io/3899/ncmm:latest \
-            -c /data/config.yaml login cookie "$C" \
+            --home /data -c /data/config.yaml login cookie --format header -f /data/fan1.header -o fan1.json \
             > data/login2.log 2>&1 || {
               echo "::error::secondary login failed"
-              grep -v -iE 'cookie|music_u|token|password|authorization|songid|歌名|昵称' data/login2.log | tail -n 40 || true
-              rm -f data/login2.log
+              grep -v -iE 'cookie|music_u|token|password|authorization|songid|歌名|昵称' data/login2.log | tail -n 80 || true
+              rm -f data/login2.log data/fan1.header
               exit 1
             }
-          python3 <<'PY'
-          from pathlib import Path
-          import shutil
-          data = Path("data")
-          main = (data / "cookie.json").resolve()
-          files = []
-          for pth in data.rglob("*.json"):
-              if "config" in pth.name.lower():
-                  continue
-              if pth.resolve() == main:
-                  continue
-              files.append(pth)
-          print("candidate secondary files:", len(files))
-          fan = data / "fan1.json"
-          if not files:
-              raise SystemExit("secondary login produced no extra cookie file")
-          picked = files[0]
-          if picked.resolve() != fan.resolve():
-              shutil.copy2(picked, fan)
-          print("secondary cookie ready bytes", fan.stat().st_size)
-          PY
-          rm -f data/login2.log
-          echo "secondary login ok"
+          rm -f data/fan1.header data/login2.log
+          if [ -f data/fan1.json ]; then
+            echo "secondary login ok (data/fan1.json)"
+          elif [ -f data/.ncmm/fan1.json ]; then
+            cp data/.ncmm/fan1.json data/fan1.json
+            echo "secondary login ok (copied from .ncmm)"
+          else
+            echo "::error::fan1.json missing after login"
+            find data -maxdepth 3 -type f -name '*.json' 2>/dev/null | while read -r f; do echo "found json: $(basename "$f")"; done
+            exit 1
+          fi
 
       - name: Resolve command
         id: cmd
@@ -236,9 +231,10 @@ jobs:
           set +e
           docker run --rm \
             -v "$PWD/data:/data" \
+            -w /data \
             --entrypoint /usr/local/bin/ncmm \
             ghcr.io/3899/ncmm:latest \
-            -c /data/config.yaml "$CMD" 2>&1 \
+            --home /data -c /data/config.yaml "$CMD" 2>&1 \
             | python3 /tmp/redact.py
           STATUS=${PIPESTATUS[0]}
           set -e
