@@ -9,3 +9,4 @@ fan*.json
 __pycache__/
 .vscode/
 .idea/
+_gen_workflow.py

@@ -1,4 +1,4 @@
-# Public-friendly: secrets only; never expose song ids/names in logs
+# Public-friendly: secrets only; redact song titles/ids and nicknames in logs
 name: ncmm-musician-cron
 
 on:
@@ -29,7 +29,7 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     if: github.repository == '<owner>/ncmm-netease-musician'
 
     steps:
@@ -42,6 +42,7 @@ jobs:
         env:
           MUSIC_U: ${{ secrets.MUSIC_U }}
           SONG_IDS: ${{ secrets.SONG_IDS }}
+          SECONDARY_MUSIC_U: ${{ secrets.SECONDARY_MUSIC_U }}
         run: |
           if [ -z "${MUSIC_U}" ]; then
             echo "::error::Secret MUSIC_U is empty."
@@ -54,6 +55,13 @@ jobs:
           echo "::add-mask::${MUSIC_U}"
           echo "::add-mask::${MUSIC_U#MUSIC_U=}"
           echo "::add-mask::${SONG_IDS}"
+          if [ -n "${SECONDARY_MUSIC_U}" ]; then
+            echo "::add-mask::${SECONDARY_MUSIC_U}"
+            echo "::add-mask::${SECONDARY_MUSIC_U#MUSIC_U=}"
+            echo "secondary_cookie=yes"
+          else
+            echo "secondary_cookie=no (will self-play on main)"
+          fi
           echo "${SONG_IDS}" | tr ',;' '\n' | while read -r id; do
             id=$(echo "$id" | tr -d '[:space:]')
             [ -n "$id" ] && echo "::add-mask::${id}"
@@ -63,6 +71,7 @@ jobs:
       - name: Prepare data dir
         env:
           SONG_IDS: ${{ secrets.SONG_IDS }}
+          SECONDARY_MUSIC_U: ${{ secrets.SECONDARY_MUSIC_U }}
         run: |
           mkdir -p data
           cp configs/config.gha.yaml data/config.yaml
@@ -86,11 +95,16 @@ jobs:
           )
           if n != 1:
               raise SystemExit("failed to inject playids.ids")
+          if not os.environ.get("SECONDARY_MUSIC_U"):
+              t2 = t2.replace(
+                  "  secondary:\n    - \"./fan1.json\"",
+                  "  secondary: []",
+              )
           p.write_text(t2, encoding="utf-8")
           print("playids injected from secret (not printed)")
           PY
 
-      - name: Login (cookie never printed)
+      - name: Login main
         env:
           MUSIC_U: ${{ secrets.MUSIC_U }}
         run: |
@@ -105,14 +119,62 @@ jobs:
             ghcr.io/3899/ncmm:latest \
             -c /data/config.yaml login cookie "$C" -m \
             > data/login.log 2>&1 || {
-              echo "::error::login failed (details redacted)"
-              grep -v -iE 'cookie|music_u|token|password|authorization|songid|歌名' data/login.log | tail -n 40 || true
+              echo "::error::main login failed"
+              grep -v -iE 'cookie|music_u|token|password|authorization|songid|歌名|昵称' data/login.log | tail -n 40 || true
               rm -f data/login.log data/cookie.json || true
               exit 1
             }
           test -f data/cookie.json || { echo "::error::no cookie.json"; exit 1; }
-          echo "login ok; cookie file bytes=$(wc -c < data/cookie.json)"
+          echo "main login ok"
           rm -f data/login.log
+
+      - name: Login secondary (optional)
+        env:
+          SECONDARY_MUSIC_U: ${{ secrets.SECONDARY_MUSIC_U }}
+        run: |
+          set +x
+          if [ -z "${SECONDARY_MUSIC_U}" ]; then
+            echo "skip secondary login"
+            exit 0
+          fi
+          case "${SECONDARY_MUSIC_U}" in
+            *MUSIC_U=*) C="${SECONDARY_MUSIC_U}" ;;
+            *) C="MUSIC_U=${SECONDARY_MUSIC_U}" ;;
+          esac
+          docker run --rm \
+            -v "$PWD/data:/data" \
+            --entrypoint /usr/local/bin/ncmm \
+            ghcr.io/3899/ncmm:latest \
+            -c /data/config.yaml login cookie "$C" \
+            > data/login2.log 2>&1 || {
+              echo "::error::secondary login failed"
+              grep -v -iE 'cookie|music_u|token|password|authorization|songid|歌名|昵称' data/login2.log | tail -n 40 || true
+              rm -f data/login2.log
+              exit 1
+            }
+          python3 <<'PY'
+          from pathlib import Path
+          import shutil
+          data = Path("data")
+          main = (data / "cookie.json").resolve()
+          files = []
+          for pth in data.rglob("*.json"):
+              if "config" in pth.name.lower():
+                  continue
+              if pth.resolve() == main:
+                  continue
+              files.append(pth)
+          print("candidate secondary files:", len(files))
+          fan = data / "fan1.json"
+          if not files:
+              raise SystemExit("secondary login produced no extra cookie file")
+          picked = files[0]
+          if picked.resolve() != fan.resolve():
+              shutil.copy2(picked, fan)
+          print("secondary cookie ready bytes", fan.stat().st_size)
+          PY
+          rm -f data/login2.log
+          echo "secondary login ok"
 
       - name: Resolve command
         id: cmd
@@ -135,9 +197,8 @@ jobs:
             musician|task|sign|musician-vip|musician-sign) ;;
             *) echo "::error::invalid command"; exit 1 ;;
           esac
-          echo "running: ncmm $CMD (song id/title redacted)"
+          echo "running: ncmm $CMD (ids/titles/nicks redacted)"
 
-          # 写 redactor
           cat > /tmp/redact.py <<'PY'
           import os, re, sys
           ids = []
@@ -146,10 +207,11 @@ jobs:
               if part.isdigit():
                   ids.append(part)
           ids.sort(key=len, reverse=True)
-          title_re = re.compile(r'歌名="[^"]*"')
+          # plain quotes and JSON-escaped quotes from slog
+          title_re = re.compile(r'歌名=(?:"[^"]*"|\\"[^\\"]*\\")')
+          nick_re = re.compile(r'昵称=(?:"[^"]*"|\\"[^\\"]*\\")')
           songid_re = re.compile(r"songId=\S+")
-          # 也遮盖「歌曲ID: 123」之类
-          bare_id_res = [re.compile(r'(?<!\d)%s(?!\d)' % re.escape(i)) for i in ids]
+          uid_re = re.compile(r"\buid=\d+")
           for raw in sys.stdin.buffer:
               try:
                   line = raw.decode("utf-8", errors="replace")
@@ -160,10 +222,10 @@ jobs:
                   s = chunk.rstrip("\n\r")
                   for i in ids:
                       s = s.replace(i, "[song]")
-                  for cre in bare_id_res:
-                      s = cre.sub("[song]", s)
                   s = title_re.sub('歌名="[redacted]"', s)
+                  s = nick_re.sub('昵称="[redacted]"', s)
                   s = songid_re.sub("songId=[song]", s)
+                  s = uid_re.sub("uid=[redacted]", s)
                   low = s.lower()
                   if any(x in low for x in ("music_u", "authorization", "password=", "cookie=")):
                       continue
@@ -178,7 +240,6 @@ jobs:
             ghcr.io/3899/ncmm:latest \
             -c /data/config.yaml "$CMD" 2>&1 \
             | python3 /tmp/redact.py
-          # pipeline 退出码取 docker（第一个）
           STATUS=${PIPESTATUS[0]}
           set -e
           if [ "${STATUS}" -ne 0 ]; then
