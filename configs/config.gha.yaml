@@ -59,7 +59,7 @@ playids:
 sign:
   automatic: true
   enableMain: true
-  enableSecondaries: false
+  enableSecondaries: true
   enableVipTask: true
   yunbeiTask:
     enableViewVipCenter: true
@@ -94,14 +94,14 @@ note:
 
 dailySongShare:
   enableMain: false
-  enableSecondaries: false
+  enableSecondaries: true
   songId: ""
   playlistId: "13848930701"
 
 musician:
   enableMain: true
   # 辅助号只用于接力刷播，不跑音乐人签到
-  enableSecondaries: false
+  enableSecondaries: true
   identityCacheDays: 0
   enableVipNote: true
   enableVipPlay: true
@@ -115,12 +115,12 @@ musician:
 
 fansgroup:
   enableMain: false
-  enableSecondaries: false
+  enableSecondaries: true
   groupIds: []
 
 vipMemberGift:
   enableMain: false
-  enableSecondaries: false
+  enableSecondaries: true
   enableGift: false
   enableClaim: false
   cloud:

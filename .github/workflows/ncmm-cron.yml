@@ -1,4 +1,4 @@
-# Public-friendly: secrets only; redact song titles/ids/nicks in logs
+# Public-friendly: secrets only; redact PII; secondary via jar file (bypass broken login)
 name: ncmm-musician-cron
 
 on:
@@ -42,6 +42,7 @@ jobs:
         env:
           MUSIC_U: ${{ secrets.MUSIC_U }}
           SONG_IDS: ${{ secrets.SONG_IDS }}
+          SECONDARY_MUSIC_U: ${{ secrets.SECONDARY_MUSIC_U }}
         run: |
           if [ -z "${MUSIC_U}" ]; then
             echo "::error::Secret MUSIC_U is empty."
@@ -54,6 +55,13 @@ jobs:
           echo "::add-mask::${MUSIC_U}"
           echo "::add-mask::${MUSIC_U#MUSIC_U=}"
           echo "::add-mask::${SONG_IDS}"
+          if [ -n "${SECONDARY_MUSIC_U}" ]; then
+            echo "::add-mask::${SECONDARY_MUSIC_U}"
+            echo "::add-mask::${SECONDARY_MUSIC_U#MUSIC_U=}"
+            echo "secondary_secret=yes"
+          else
+            echo "secondary_secret=no"
+          fi
           echo "${SONG_IDS}" | tr ',;' '\n' | while read -r id; do
             id=$(echo "$id" | tr -d '[:space:]')
             [ -n "$id" ] && echo "::add-mask::${id}"
@@ -63,13 +71,16 @@ jobs:
       - name: Prepare data dir
         env:
           SONG_IDS: ${{ secrets.SONG_IDS }}
+          SECONDARY_MUSIC_U: ${{ secrets.SECONDARY_MUSIC_U }}
         run: |
           mkdir -p data
           cp configs/config.gha.yaml data/config.yaml
           cp configs/notify.hf.yaml data/notify.yaml
           python3 <<'PY'
-          import os, re
+          import os, re, json
           from pathlib import Path
+          from datetime import datetime, timezone, timedelta
+
           p = Path("data/config.yaml")
           t = p.read_text(encoding="utf-8")
           ids = os.environ["SONG_IDS"].strip()
@@ -87,11 +98,65 @@ jobs:
           )
           if n != 1:
               raise SystemExit("failed to inject playids.ids")
-          # main self-play only (secondary login panics in upstream ncmm)
-          t2 = re.sub(r"(?m)^(\s*secondary:\s*).*(?:\n\s*-\s*\"[^\"]+\")*", r"\1[]", t2, count=1)
-          t2 = t2.replace("enableMain: false", "enableMain: true")
+
+          sec = (os.environ.get("SECONDARY_MUSIC_U") or "").strip()
+          if sec:
+              if sec.startswith("MUSIC_U="):
+                  sec = sec.split("=", 1)[1].strip()
+              now = datetime.now(timezone.utc)
+              exp = now + timedelta(days=3650)
+
+              def ent(domain: str, host_only: bool = False):
+                  return {
+                      "Name": "MUSIC_U",
+                      "Value": sec,
+                      "Domain": domain,
+                      "Path": "/",
+                      "SameSite": "",
+                      "Secure": True,
+                      "HttpOnly": True,
+                      "Persistent": True,
+                      "HostOnly": host_only,
+                      "Expires": exp.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                      "Creation": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                      "LastAccess": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                      "SeqNum": 1,
+                  }
+
+              # ncmm cookie jar format: map[domain]map[name]Entry
+              jar = {
+                  "163.com": {"MUSIC_U": ent(".163.com", False)},
+                  "music.163.com": {"MUSIC_U": ent("music.163.com", True)},
+              }
+              Path("data/fan1.json").write_text(
+                  json.dumps(jar, ensure_ascii=False), encoding="utf-8"
+              )
+              t2 = re.sub(
+                  r"(?m)^(\s*secondary:\s*).*(?:\n\s*-\s*\"[^\"]+\")*",
+                  r'\1\n    - "./fan1.json"',
+                  t2,
+                  count=1,
+              )
+              if '"./fan1.json"' not in t2:
+                  t2 = t2.replace(
+                      "secondary: []",
+                      'secondary:\n    - "./fan1.json"',
+                      1,
+                  )
+              t2 = t2.replace("enableMain: false", "enableMain: true")
+              print("secondary jar written (bypass login CLI)")
+          else:
+              t2 = re.sub(
+                  r"(?m)^(\s*secondary:\s*).*(?:\n\s*-\s*\"[^\"]+\")*",
+                  r"\1[]",
+                  t2,
+                  count=1,
+              )
+              t2 = t2.replace("enableMain: false", "enableMain: true")
+              print("no secondary secret; main self-play only")
+
           p.write_text(t2, encoding="utf-8")
-          print("config ready: main self-play, song ids injected")
+          print("config ready")
           PY
 
       - name: Login main
@@ -122,6 +187,9 @@ jobs:
           test -f data/cookie.json || { echo "::error::no cookie.json"; ls -la data || true; exit 1; }
           echo "main login ok bytes=$(wc -c < data/cookie.json)"
           rm -f data/login.log
+          if [ -f data/fan1.json ]; then
+            echo "secondary jar present bytes=$(wc -c < data/fan1.json)"
+          fi
 
       - name: Resolve command
         id: cmd
