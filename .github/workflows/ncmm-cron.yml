@@ -1,0 +1,73 @@
+# 免费替代 HF Docker Space：用 GitHub Actions 定时跑音乐人任务
+# 需要在 repo Secrets 里配置 MUSIC_U
+name: ncmm-musician-cron
+
+on:
+  schedule:
+    # UTC 00:30 ≈ 北京 08:30
+    - cron: "30 0 * * *"
+    # UTC 06:00 ≈ 北京 14:00
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      command:
+        description: "ncmm subcommand"
+        required: true
+        default: "musician"
+        type: choice
+        options:
+          - musician
+          - task
+          - sign
+          - musician-vip
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout adapter configs
+        uses: actions/checkout@v4
+
+      - name: Prepare data dir
+        run: |
+          mkdir -p data
+          cp configs/config.hf.yaml data/config.yaml
+          cp configs/notify.hf.yaml data/notify.yaml
+
+      - name: Login with MUSIC_U
+        env:
+          MUSIC_U: ${{ secrets.MUSIC_U }}
+        run: |
+          if [ -z "$MUSIC_U" ]; then
+            echo "Missing secret MUSIC_U"
+            exit 1
+          fi
+          case "$MUSIC_U" in
+            *MUSIC_U=*) C="$MUSIC_U" ;;
+            *) C="MUSIC_U=$MUSIC_U" ;;
+          esac
+          docker run --rm \
+            -v "$PWD/data:/data" \
+            --entrypoint /usr/local/bin/ncmm \
+            ghcr.io/3899/ncmm:latest \
+            -c /data/config.yaml login cookie "$C" -m
+
+      - name: Pick command
+        id: cmd
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "value=${{ inputs.command }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.schedule }}" = "0 6 * * *" ]; then
+            echo "value=musician" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=task" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run ncmm
+        run: |
+          docker run --rm \
+            -v "$PWD/data:/data" \
+            --entrypoint /usr/local/bin/ncmm \
+            ghcr.io/3899/ncmm:latest \
+            -c /data/config.yaml ${{ steps.cmd.outputs.value }}
