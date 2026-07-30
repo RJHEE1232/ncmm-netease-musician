@@ -1,0 +1,12 @@
+.git
+.gitignore
+docs
+ncmm-data
+data
+.env
+*.md
+!README.md
+__pycache__
+.DS_Store
+.vscode
+.idea

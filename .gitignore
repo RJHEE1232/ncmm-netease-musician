@@ -1,0 +1,11 @@
+ncmm-data/
+data/
+.env
+.env.*
+*.cookie
+cookie.json
+fan*.json
+.DS_Store
+__pycache__/
+.vscode/
+.idea/

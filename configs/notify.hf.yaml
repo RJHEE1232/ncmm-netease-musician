@@ -1,0 +1,49 @@
+# 通道凭证；策略开关在 config.yaml 的 notify 节点
+webhook:
+  enabled: false
+  url: ""
+  method: POST
+  headers: {}
+  body_template: ""
+
+bark:
+  enabled: false
+  key: ""
+  server: ""
+
+serverchan:
+  enabled: false
+  sckey: ""
+
+telegram:
+  enabled: false
+  bot_token: ""
+  user_id: ""
+  api_host: ""
+  proxy: ""
+
+dingtalk:
+  enabled: false
+  access_token: ""
+  secret: ""
+
+coolpush:
+  enabled: false
+  skey: ""
+  mode: "send"
+
+pushplus:
+  enabled: false
+  token: ""
+
+wecom_key:
+  enabled: false
+  key: ""
+
+wecom_app:
+  enabled: false
+  corp_id: ""
+  corp_secret: ""
+  to_user: "@all"
+  agent_id: ""
+  media_id: ""
