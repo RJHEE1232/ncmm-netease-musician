@@ -50,7 +50,8 @@ playids:
   run_max: 5
   gap_min: 0
   gap_max: 1
-  ids: "3366663042,3373818852,3373845775,3372894655,3372989897"
+  # 曲目 ID 由 Actions Secret SONG_IDS 在运行时注入，不写进公开仓库
+  ids: ""
   idsFile: []
 
 sign:

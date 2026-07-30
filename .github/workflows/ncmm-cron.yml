@@ -1,11 +1,9 @@
-# Public-friendly: secrets only; live filtered logs; short play batches for Actions
+# Public-friendly: secrets only; never expose song ids/names in logs
 name: ncmm-musician-cron
 
 on:
   schedule:
-    # UTC 00:30 ≈ Beijing 08:30 → task（日常，通常较快）
     - cron: "30 0 * * *"
-    # UTC 06:00 ≈ Beijing 14:00 → musician（含少量播放）
     - cron: "0 6 * * *"
   workflow_dispatch:
     inputs:
@@ -31,7 +29,6 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    # 每首真实等待时长，5 首也可能 20～30 分钟；留余量
     timeout-minutes: 60
     if: github.repository == '<owner>/ncmm-netease-musician'
 
@@ -44,21 +41,54 @@ jobs:
       - name: Guard and mask secrets
         env:
           MUSIC_U: ${{ secrets.MUSIC_U }}
+          SONG_IDS: ${{ secrets.SONG_IDS }}
         run: |
           if [ -z "${MUSIC_U}" ]; then
             echo "::error::Secret MUSIC_U is empty."
             exit 1
           fi
+          if [ -z "${SONG_IDS}" ]; then
+            echo "::error::Secret SONG_IDS is empty."
+            exit 1
+          fi
           echo "::add-mask::${MUSIC_U}"
           echo "::add-mask::${MUSIC_U#MUSIC_U=}"
-          echo "Secret present (masked). length=${#MUSIC_U}"
+          echo "::add-mask::${SONG_IDS}"
+          echo "${SONG_IDS}" | tr ',;' '\n' | while read -r id; do
+            id=$(echo "$id" | tr -d '[:space:]')
+            [ -n "$id" ] && echo "::add-mask::${id}"
+          done
+          echo "Secrets present (masked)."
 
       - name: Prepare data dir
+        env:
+          SONG_IDS: ${{ secrets.SONG_IDS }}
         run: |
           mkdir -p data
-          # Actions 用少播放配置，避免超时
           cp configs/config.gha.yaml data/config.yaml
           cp configs/notify.hf.yaml data/notify.yaml
+          python3 <<'PY'
+          import os, re, pathlib
+          p = pathlib.Path("data/config.yaml")
+          t = p.read_text(encoding="utf-8")
+          ids = os.environ["SONG_IDS"].strip()
+          if not re.fullmatch(r"[0-9,\s;]+", ids):
+              raise SystemExit("SONG_IDS contains invalid characters")
+          ids = re.sub(r"[;\s]+", ",", ids)
+          ids = re.sub(r",+", ",", ids).strip(",")
+          if not ids:
+              raise SystemExit("SONG_IDS empty after normalize")
+          t2, n = re.subn(
+              r'(playids:\n(?:.*\n)*?\s+ids:\s*)""',
+              r'\1"' + ids + '"',
+              t,
+              count=1,
+          )
+          if n != 1:
+              raise SystemExit("failed to inject playids.ids")
+          p.write_text(t2, encoding="utf-8")
+          print("playids injected from secret (not printed)")
+          PY
 
       - name: Login (cookie never printed)
         env:
@@ -76,7 +106,7 @@ jobs:
             -c /data/config.yaml login cookie "$C" -m \
             > data/login.log 2>&1 || {
               echo "::error::login failed (details redacted)"
-              grep -v -iE 'cookie|music_u|token|password|authorization' data/login.log | tail -n 40 || true
+              grep -v -iE 'cookie|music_u|token|password|authorization|songid|歌名' data/login.log | tail -n 40 || true
               rm -f data/login.log data/cookie.json || true
               exit 1
             }
@@ -95,7 +125,9 @@ jobs:
             echo "value=task" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Run ncmm (live filtered logs)
+      - name: Run ncmm (redacted live logs)
+        env:
+          SONG_IDS: ${{ secrets.SONG_IDS }}
         run: |
           set +x
           CMD="${{ steps.cmd.outputs.value }}"
@@ -103,17 +135,50 @@ jobs:
             musician|task|sign|musician-vip|musician-sign) ;;
             *) echo "::error::invalid command"; exit 1 ;;
           esac
-          echo "running: ncmm $CMD (live log; secrets masked)"
-          # 实时输出；过滤敏感词；进度条 \r 转成换行方便 Actions 显示
+          echo "running: ncmm $CMD (song id/title redacted)"
+
+          # 写 redactor
+          cat > /tmp/redact.py <<'PY'
+          import os, re, sys
+          ids = []
+          for part in re.split(r"[,;\s]+", os.environ.get("SONG_IDS", "")):
+              part = part.strip()
+              if part.isdigit():
+                  ids.append(part)
+          ids.sort(key=len, reverse=True)
+          title_re = re.compile(r'歌名="[^"]*"')
+          songid_re = re.compile(r"songId=\S+")
+          # 也遮盖「歌曲ID: 123」之类
+          bare_id_res = [re.compile(r'(?<!\d)%s(?!\d)' % re.escape(i)) for i in ids]
+          for raw in sys.stdin.buffer:
+              try:
+                  line = raw.decode("utf-8", errors="replace")
+              except Exception:
+                  continue
+              line = line.replace("\r", "\n")
+              for chunk in line.splitlines(True):
+                  s = chunk.rstrip("\n\r")
+                  for i in ids:
+                      s = s.replace(i, "[song]")
+                  for cre in bare_id_res:
+                      s = cre.sub("[song]", s)
+                  s = title_re.sub('歌名="[redacted]"', s)
+                  s = songid_re.sub("songId=[song]", s)
+                  low = s.lower()
+                  if any(x in low for x in ("music_u", "authorization", "password=", "cookie=")):
+                      continue
+                  sys.stdout.write(s + "\n")
+                  sys.stdout.flush()
+          PY
+
           set +e
           docker run --rm \
             -v "$PWD/data:/data" \
             --entrypoint /usr/local/bin/ncmm \
             ghcr.io/3899/ncmm:latest \
             -c /data/config.yaml "$CMD" 2>&1 \
-            | tr '\r' '\n' \
-            | grep -v -iE 'cookie|music_u|token=|password|authorization|MUSIC_U' \
-            | tee data/run.filtered.log
+            | python3 /tmp/redact.py
+          # pipeline 退出码取 docker（第一个）
           STATUS=${PIPESTATUS[0]}
           set -e
           if [ "${STATUS}" -ne 0 ]; then
@@ -125,7 +190,6 @@ jobs:
       - name: Scrub workspace
         if: always()
         run: |
-          # 容器可能以 root 写 log/database，用 docker 删最干净
           docker run --rm -v "$PWD/data:/data" --entrypoint /bin/sh ghcr.io/3899/ncmm:latest -c 'rm -rf /data/* /data/.[!.]* 2>/dev/null || true' || true
           rm -rf data 2>/dev/null || sudo rm -rf data || true
           mkdir -p data
