@@ -45,12 +45,31 @@ https://huggingface.co/<hf-user>/ncmm-netease-musician
 
 业务二进制来自官方镜像 `ghcr.io/3899/ncmm`，本仓库只做适配壳。
 
-## 路径 A：GitHub Actions（推荐免费）
+## 路径 A：GitHub Actions · Public（推荐免费）
 
-1. 把本仓库推到 GitHub（private 即可）
-2. Repo → Settings → Secrets → Actions → 新建 `MUSIC_U`
-3. Actions 里手动跑一次 `ncmm-musician-cron`（选 `musician`）
-4. 之后按 schedule 自动跑（UTC 00:30 ≈ 北京 08:30 的 `task`；UTC 06:00 ≈ 北京 14:00 的 `musician`）
+公开代码、**私密凭证**。详细见 [docs/PUBLIC-PRIVACY.md](docs/PUBLIC-PRIVACY.md)。
+
+### 隐私要点
+
+- `MUSIC_U` **只**放在 Actions Secrets（加密），永不进 git
+- workflow 对 secret 做 `::add-mask::`，结束强制删除 `cookie.json`
+- 日志过滤 `cookie` / `MUSIC_U` / `token` 等关键字
+- `permissions: contents: read`（不写仓库）
+- job 限制在本仓库名，避免乱改 fork 逻辑误用
+
+### 上手
+
+1. Fork 或推送到 GitHub（可 **public**）
+2. 若 fork：改 workflow 里的 `if: github.repository == '你的用户名/仓名'`
+3. **Settings → Secrets → Actions** → 新建 `MUSIC_U`（不要发 Issue）
+4. Actions → `ncmm-musician-cron` → Run workflow → 选 `musician`
+5. 定时：UTC 00:30 ≈ 北京 08:30 `task`；UTC 06:00 ≈ 北京 14:00 `musician`
+
+### Public 做不到的
+
+- 隐藏「你在跑网易云音乐人任务」这一行为本身（Actions 徽章/记录可见）
+- 独占 IP（仍是 GitHub 共享 runner）
+- 若需要完全低调：改用 **private** 仓或本机 Docker
 
 ## 路径 B：HF Docker Space（要 PRO）
 

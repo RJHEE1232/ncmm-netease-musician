@@ -1,12 +1,11 @@
-# 免费替代 HF Docker Space：用 GitHub Actions 定时跑音乐人任务
-# 需要在 repo Secrets 里配置 MUSIC_U
+# Public-friendly: secrets only; scrub cookies; minimal permissions
 name: ncmm-musician-cron
 
 on:
   schedule:
-    # UTC 00:30 ≈ 北京 08:30
+    # UTC 00:30 ≈ Beijing 08:30 → task
     - cron: "30 0 * * *"
-    # UTC 06:00 ≈ 北京 14:00
+    # UTC 06:00 ≈ Beijing 14:00 → musician (monthly VIP advanced)
     - cron: "0 6 * * *"
   workflow_dispatch:
     inputs:
@@ -21,13 +20,38 @@ on:
           - sign
           - musician-vip
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ncmm-cron-${{ github.repository }}
+  cancel-in-progress: false
+
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
+    # Change this if your public repo path differs
+    if: github.repository == '<owner>/ncmm-netease-musician'
+
     steps:
-      - name: Checkout adapter configs
+      - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Guard and mask secrets
+        env:
+          MUSIC_U: ${{ secrets.MUSIC_U }}
+        run: |
+          if [ -z "${MUSIC_U}" ]; then
+            echo "::error::Secret MUSIC_U is empty. Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          echo "::add-mask::${MUSIC_U}"
+          TOKEN="${MUSIC_U#MUSIC_U=}"
+          echo "::add-mask::${TOKEN}"
+          echo "Secret present (masked). length=${#MUSIC_U}"
 
       - name: Prepare data dir
         run: |
@@ -35,25 +59,34 @@ jobs:
           cp configs/config.hf.yaml data/config.yaml
           cp configs/notify.hf.yaml data/notify.yaml
 
-      - name: Login with MUSIC_U
+      - name: Login (cookie never printed)
         env:
           MUSIC_U: ${{ secrets.MUSIC_U }}
         run: |
-          if [ -z "$MUSIC_U" ]; then
-            echo "Missing secret MUSIC_U"
-            exit 1
-          fi
-          case "$MUSIC_U" in
-            *MUSIC_U=*) C="$MUSIC_U" ;;
-            *) C="MUSIC_U=$MUSIC_U" ;;
+          set +x
+          case "${MUSIC_U}" in
+            *MUSIC_U=*) C="${MUSIC_U}" ;;
+            *) C="MUSIC_U=${MUSIC_U}" ;;
           esac
           docker run --rm \
             -v "$PWD/data:/data" \
             --entrypoint /usr/local/bin/ncmm \
             ghcr.io/3899/ncmm:latest \
-            -c /data/config.yaml login cookie "$C" -m
+            -c /data/config.yaml login cookie "$C" -m \
+            > data/login.log 2>&1 || {
+              echo "::error::login failed (details redacted)"
+              grep -v -iE 'cookie|music_u|token|password|authorization' data/login.log | tail -n 30 || true
+              rm -f data/login.log data/cookie.json
+              exit 1
+            }
+          if [ ! -f data/cookie.json ]; then
+            echo "::error::login did not produce cookie.json"
+            exit 1
+          fi
+          echo "login ok; cookie file bytes=$(wc -c < data/cookie.json)"
+          rm -f data/login.log
 
-      - name: Pick command
+      - name: Resolve command
         id: cmd
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
@@ -66,8 +99,30 @@ jobs:
 
       - name: Run ncmm
         run: |
+          set +x
+          CMD="${{ steps.cmd.outputs.value }}"
+          case "$CMD" in
+            musician|task|sign|musician-vip) ;;
+            *) echo "::error::invalid command"; exit 1 ;;
+          esac
+          echo "running: ncmm $CMD"
           docker run --rm \
             -v "$PWD/data:/data" \
             --entrypoint /usr/local/bin/ncmm \
             ghcr.io/3899/ncmm:latest \
-            -c /data/config.yaml ${{ steps.cmd.outputs.value }}
+            -c /data/config.yaml "$CMD" \
+            > data/run.log 2>&1
+          STATUS=$?
+          grep -v -iE 'cookie|music_u|token=|password|authorization|MUSIC_U' data/run.log | tail -n 200 || true
+          if [ $STATUS -ne 0 ]; then
+            echo "::error::ncmm $CMD exit=$STATUS"
+            exit $STATUS
+          fi
+          echo "ncmm $CMD finished ok"
+
+      - name: Scrub workspace
+        if: always()
+        run: |
+          rm -rf data
+          mkdir -p data
+          echo "workspace scrubbed (no cookie artifacts)"
