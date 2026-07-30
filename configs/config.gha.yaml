@@ -1,4 +1,4 @@
-# HF 精简配置：开音乐人月度 VIP，关重任务 / 需 antiCheatToken 的任务
+# GitHub Actions 配置：单次少刷（每首真实等待整曲时长，多了会超时）
 version: 1.1.11
 
 accounts:
@@ -43,12 +43,13 @@ network:
 playids:
   enableMain: false
   enableSecondaries: false
-  daily_min: 40
-  daily_max: 100
-  run_min: 20
-  run_max: 40
+  daily_min: 5
+  daily_max: 15
+  # 3～5 首：约 3～4min/首 → 单次 musician 大约 15～25 分钟
+  run_min: 3
+  run_max: 5
   gap_min: 0
-  gap_max: 5
+  gap_max: 1
   ids: "3366663042,3373818852,3373845775,3372894655,3372989897"
   idsFile: []
 
@@ -69,8 +70,9 @@ sign:
     enablePlayDailyRecommend: false
 
 mixPlay:
-  enabled: true
-  dailyRecommendRatio: 0.3
+  # 关掉日推混听，避免额外不计入目标的等待时间
+  enabled: false
+  dailyRecommendRatio: 0.0
   countTarget: false
 
 note:
