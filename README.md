@@ -21,10 +21,21 @@ app_port: 7860
 
 > 仅供学习交流。账号风险自负。
 
-## 架构
+## 现状说明（重要）
+
+| 路径 | 是否可用 | 说明 |
+|------|----------|------|
+| **HF Docker Space** | 需 [HF PRO](https://huggingface.co/pro) | 2025 起 free 账号不能再新开 Gradio/Docker Space |
+| **GitHub Actions 定时** | ✅ 免费 | 见 `.github/workflows/ncmm-cron.yml` |
+| **本机 / VPS Docker** | ✅ | `docker build` 后常驻运行 |
+
+代码已备份到私有模型仓（非 Space）：  
+https://huggingface.co/<hf-user>/ncmm-netease-musician
+
+## 架构（HF Docker / 本机 Docker）
 
 ```
-HF Space (Docker)
+容器
   └─ bootstrap.sh
        ├─ 种子 /data/config.yaml
        ├─ CookieCloud 或 MUSIC_U 登录
@@ -32,7 +43,25 @@ HF Space (Docker)
        └─ keepalive.py → :7860 /health
 ```
 
-业务二进制来自官方镜像 `ghcr.io/3899/ncmm`，本仓库只做 HF 适配。
+业务二进制来自官方镜像 `ghcr.io/3899/ncmm`，本仓库只做适配壳。
+
+## 路径 A：GitHub Actions（推荐免费）
+
+1. 把本仓库推到 GitHub（private 即可）
+2. Repo → Settings → Secrets → Actions → 新建 `MUSIC_U`
+3. Actions 里手动跑一次 `ncmm-musician-cron`（选 `musician`）
+4. 之后按 schedule 自动跑（UTC 00:30 ≈ 北京 08:30 的 `task`；UTC 06:00 ≈ 北京 14:00 的 `musician`）
+
+## 路径 B：HF Docker Space（要 PRO）
+
+开通 PRO 后：
+
+```bash
+hf repos create <user>/ncmm-netease-musician --type space --space-sdk docker --private
+hf upload <user>/ncmm-netease-musician . --type space --exclude ".git/*"
+hf spaces variables add <user>/ncmm-netease-musician -e TZ=Asia/Shanghai -e DEBUG_RUN_ON_START=1
+hf spaces secrets add <user>/ncmm-netease-musician -s MUSIC_U
+```
 
 ## 必配 Secrets
 
