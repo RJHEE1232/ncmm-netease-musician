@@ -129,4 +129,23 @@ notify:
   file: "notify.yaml"
 
 log:
-  appName: "ncmm-hf"
+  app: ncm
+  format: text
+  level: info
+  stdout: true
+  rotate:
+    filename: "./log/ncm.log"
+    maxsize: 100
+    maxage: 7
+    maxbackups: 3
+    localtime: true
+    compress: true
+
+database:
+  driver: badger
+  path: "./database/badger/"
+
+updater:
+  check: false
+  auto_update: false
+
