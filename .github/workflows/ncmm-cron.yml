@@ -1,4 +1,4 @@
-# Public-friendly: secondary via jar clone+swap (bypass broken secondary login)
+# Public-friendly: secondary jar = clone main cookie + swap MUSIC_U
 name: ncmm-musician-cron
 
 on:
@@ -62,7 +62,8 @@ jobs:
           else
             echo "secondary_secret=no"
           fi
-          echo "${SONG_IDS}" | tr ',;' '\n' | while read -r id; do
+          echo "${SONG_IDS}" | tr ',;' '
+' | while read -r id; do
             id=$(echo "$id" | tr -d '[:space:]')
             [ -n "$id" ] && echo "::add-mask::${id}"
           done
@@ -75,37 +76,7 @@ jobs:
           mkdir -p data
           cp configs/config.gha.yaml data/config.yaml
           cp configs/notify.hf.yaml data/notify.yaml
-          python3 <<'PY'
-          import os, re
-          from pathlib import Path
-          p = Path("data/config.yaml")
-          t = p.read_text(encoding="utf-8")
-          ids = os.environ["SONG_IDS"].strip()
-          if not re.fullmatch(r"[0-9,\s;]+", ids):
-              raise SystemExit("SONG_IDS contains invalid characters")
-          ids = re.sub(r"[;\s]+", ",", ids)
-          ids = re.sub(r",+", ",", ids).strip(",")
-          if not ids:
-              raise SystemExit("SONG_IDS empty after normalize")
-          t2, n = re.subn(
-              r'(playids:\n(?:.*\n)*?\s+ids:\s*)""',
-              r'\1"' + ids + '"',
-              t,
-              count=1,
-          )
-          if n != 1:
-              raise SystemExit("failed to inject playids.ids")
-          # secondary filled after main login (need real jar template)
-          t2 = re.sub(
-              r"(?m)^(\s*secondary:\s*).*(?:\n\s*-\s*\"[^\"]+\")*",
-              r"\1[]",
-              t2,
-              count=1,
-          )
-          t2 = t2.replace("enableMain: false", "enableMain: true")
-          p.write_text(t2, encoding="utf-8")
-          print("config prepared (secondary pending)")
-          PY
+          python3 scripts/inject_songs.py
 
       - name: Login main
         env:
@@ -116,13 +87,7 @@ jobs:
             *MUSIC_U=*) C="${MUSIC_U}" ;;
             *) C="MUSIC_U=${MUSIC_U}" ;;
           esac
-          docker run --rm \
-            -v "$PWD/data:/data" \
-            -w /data \
-            --entrypoint /usr/local/bin/ncmm \
-            ghcr.io/3899/ncmm:latest \
-            --home /data -c /data/config.yaml login cookie --format header "$C" -m \
-            > data/login.log 2>&1 || {
+          docker run --rm             -v "$PWD/data:/data"             -w /data             --entrypoint /usr/local/bin/ncmm             ghcr.io/3899/ncmm:latest             --home /data -c /data/config.yaml login cookie --format header "$C" -m             > data/login.log 2>&1 || {
               echo "::error::main login failed"
               grep -v -iE 'cookie|music_u|token|password|authorization|songid|歌名|昵称' data/login.log | tail -n 80 || true
               rm -f data/login.log data/cookie.json || true
@@ -136,81 +101,20 @@ jobs:
           echo "main login ok bytes=$(wc -c < data/cookie.json)"
           rm -f data/login.log
 
-      - name: Build secondary jar from main template
+      - name: Build secondary jar
         env:
           SECONDARY_MUSIC_U: ${{ secrets.SECONDARY_MUSIC_U }}
         run: |
           set +x
           if [ -z "${SECONDARY_MUSIC_U}" ]; then
-            echo "no secondary secret; main-only play"
+            echo "no secondary; main-only"
             exit 0
           fi
           case "${SECONDARY_MUSIC_U}" in
-            *MUSIC_U=*) SEC="${SECONDARY_MUSIC_U#MUSIC_U=}" ;;
-            *) SEC="${SECONDARY_MUSIC_U}" ;;
+            *MUSIC_U=*) export SEC="${SECONDARY_MUSIC_U#MUSIC_U=}" ;;
+            *) export SEC="${SECONDARY_MUSIC_U}" ;;
           esac
-          export SEC
-          python3 - <<'PY'
-          import os, json, re
-          from pathlib import Path
-          from copy import deepcopy
-
-          sec = os.environ.get("SEC", "").strip()
-          if not sec:
-              raise SystemExit("empty SEC")
-          main_path = Path("data/cookie.json")
-          raw = json.loads(main_path.read_text(encoding="utf-8"))
-          fan = deepcopy(raw)
-          replaced = 0
-          # jar is map[domain]map[cookieName]Entry
-          if isinstance(fan, dict):
-              for domain, cookies in fan.items():
-                  if not isinstance(cookies, dict):
-                      continue
-                  for name, ent in list(cookies.items()):
-                      if not isinstance(ent, dict):
-                          continue
-                      if ent.get("Name") == "MUSIC_U" or name == "MUSIC_U":
-                          ent["Value"] = sec
-                          ent["Name"] = "MUSIC_U"
-                          cookies[name] = ent
-                          replaced += 1
-              if replaced == 0:
-                  # inject MUSIC_U into every domain bucket
-                  for domain, cookies in fan.items():
-                      if isinstance(cookies, dict):
-                          sample = next(iter(cookies.values())) if cookies else {
-                              "Path": "/", "Secure": True, "HttpOnly": True,
-                              "Persistent": True, "HostOnly": False,
-                              "Domain": domain, "SameSite": "",
-                          }
-                          ent = dict(sample) if isinstance(sample, dict) else {}
-                          ent.update({"Name": "MUSIC_U", "Value": sec, "Path": ent.get("Path") or "/"})
-                          cookies["MUSIC_U"] = ent
-                          replaced += 1
-          Path("data/fan1.json").write_text(
-              json.dumps(fan, ensure_ascii=False), encoding="utf-8"
-          )
-          print(f"secondary jar built from main template, music_u fields={replaced}")
-
-          cfg = Path("data/config.yaml")
-          t = cfg.read_text(encoding="utf-8")
-          t2 = re.sub(
-              r"(?m)^[ 	]*secondary:[ 	]*(?:\[\][ 	]*)?(?:
-[ 	]*-[ 	]*\"[^\"]+\")*",
-              '  secondary:
-    - "./fan1.json"
-    - "./cookie.json"',
-              t,
-              count=1,
-          )
-          if '"./fan1.json"' not in t2:
-              raise SystemExit("failed to set secondary list")
-          t2 = t2.replace("enableMain: false", "enableMain: true")
-          cfg.write_text(t2, encoding="utf-8")
-          print("config secondary: fan1 + main fallback")
-          PY
-          echo "secondary jar bytes=$(wc -c < data/fan1.json)"
+          python3 scripts/build_secondary_jar.py
 
       - name: Resolve command
         id: cmd
@@ -233,49 +137,9 @@ jobs:
             musician|task|sign|musician-vip|musician-sign) ;;
             *) echo "::error::invalid command"; exit 1 ;;
           esac
-          echo "running: ncmm $CMD (ids/titles/nicks redacted)"
-
-          cat > /tmp/redact.py <<'PY'
-          import os, re, sys
-          ids = []
-          for part in re.split(r"[,;\s]+", os.environ.get("SONG_IDS", "")):
-              part = part.strip()
-              if part.isdigit():
-                  ids.append(part)
-          ids.sort(key=len, reverse=True)
-          title_re = re.compile(r'歌名=(?:"[^"]*"|\\"[^\\"]*\\")')
-          nick_re = re.compile(r'昵称=(?:"[^"]*"|\\"[^\\"]*\\")')
-          songid_re = re.compile(r"songId=\S+")
-          uid_re = re.compile(r"\buid=\d+")
-          for raw in sys.stdin.buffer:
-              try:
-                  line = raw.decode("utf-8", errors="replace")
-              except Exception:
-                  continue
-              line = line.replace("\r", "\n")
-              for chunk in line.splitlines(True):
-                  s = chunk.rstrip("\n\r")
-                  for i in ids:
-                      s = s.replace(i, "[song]")
-                  s = title_re.sub('歌名="[redacted]"', s)
-                  s = nick_re.sub('昵称="[redacted]"', s)
-                  s = songid_re.sub("songId=[song]", s)
-                  s = uid_re.sub("uid=[redacted]", s)
-                  low = s.lower()
-                  if any(x in low for x in ("music_u", "authorization", "password=", "cookie=")):
-                      continue
-                  sys.stdout.write(s + "\n")
-                  sys.stdout.flush()
-          PY
-
+          echo "running: ncmm $CMD (redacted)"
           set +e
-          docker run --rm \
-            -v "$PWD/data:/data" \
-            -w /data \
-            --entrypoint /usr/local/bin/ncmm \
-            ghcr.io/3899/ncmm:latest \
-            --home /data -c /data/config.yaml "$CMD" 2>&1 \
-            | python3 /tmp/redact.py
+          docker run --rm             -v "$PWD/data:/data"             -w /data             --entrypoint /usr/local/bin/ncmm             ghcr.io/3899/ncmm:latest             --home /data -c /data/config.yaml "$CMD" 2>&1             | python3 scripts/redact_logs.py
           STATUS=${PIPESTATUS[0]}
           set -e
           if [ "${STATUS}" -ne 0 ]; then
