@@ -62,11 +62,7 @@ jobs:
           else
             echo "secondary_secret=no"
           fi
-          echo "${SONG_IDS}" | tr ',;' '
-' | while read -r id; do
-            id=$(echo "$id" | tr -d '[:space:]')
-            [ -n "$id" ] && echo "::add-mask::${id}"
-          done
+          python3 -c "import os; [print(f'::add-mask::{x.strip()}') for x in os.environ.get('SONG_IDS','').replace(';',',').split(',') if x.strip()]"
           echo "Secrets present (masked)."
 
       - name: Prepare data dir
