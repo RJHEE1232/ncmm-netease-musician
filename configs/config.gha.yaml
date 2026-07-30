@@ -43,8 +43,8 @@ network:
     xeapi: ""
 
 playids:
-  # VIP 进阶刷播由 musician 调度；主号可作兜底，优先 auxiliary fan1
-  enableMain: false
+  # 主号可刷；有 auxiliary 时 musician 仍优先 secondary
+  enableMain: true
   enableSecondaries: true
   # 短歌为主时可多刷；Actions 60min 内约 20～30 首较稳
   daily_min: 20

@@ -141,64 +141,83 @@ jobs:
           SECONDARY_MUSIC_U: ${{ secrets.SECONDARY_MUSIC_U }}
         run: |
           set +x
+          clear_secondary() {
+            python3 <<'PY'
+          from pathlib import Path
+          import re
+          p = Path("data/config.yaml")
+          t = p.read_text(encoding="utf-8")
+          t2 = re.sub(
+              r"secondary:\s*\n(?:\s*-\s*\"[^\"]+\"\s*\n?)+",
+              "secondary: []\n",
+              t,
+              count=1,
+          )
+          # play 允许主号兜底
+          t2 = t2.replace("enableMain: false", "enableMain: true", 1)
+          p.write_text(t2, encoding="utf-8")
+          print("config: secondary cleared, enableMain play fallback")
+          PY
+          }
           if [ -z "${SECONDARY_MUSIC_U}" ]; then
             echo "skip secondary login"
-            # 无辅助号时清空 secondary，避免 musician 找不到 fan1
-            sed -i 's|  secondary:\n    - "./fan1.json"|  secondary: []|' data/config.yaml 2>/dev/null || \
-            python3 -c "from pathlib import Path;p=Path('data/config.yaml');t=p.read_text();p.write_text(t.replace('  secondary:\n    - \"./fan1.json\"','  secondary: []'))"
+            clear_secondary
             exit 0
           fi
           case "${SECONDARY_MUSIC_U}" in
             *MUSIC_U=*) C="${SECONDARY_MUSIC_U}" ;;
             *) C="MUSIC_U=${SECONDARY_MUSIC_U}" ;;
           esac
-          # 辅助号：先写文件，再用 -f 自动探测（勿用 --format header -f，上游 bug）
-          printf '%s' "$C" > data/fan1.header
+          # 与主号相同写法（仅去掉 -m）；-o 在部分版本会触发 cobra panic，故不传 -o
           set +e
           docker run --rm \
             -v "$PWD/data:/data" \
             -w /data \
             --entrypoint /usr/local/bin/ncmm \
             ghcr.io/3899/ncmm:latest \
-            --home /data -c /data/config.yaml login cookie -f /data/fan1.header -o fan1.json \
+            --home /data -c /data/config.yaml login cookie --format header "$C" \
             > data/login2.log 2>&1
           RC=$?
-          if [ "$RC" -ne 0 ]; then
-            # 回退：位置参数 header
-            docker run --rm \
-              -v "$PWD/data:/data" \
-              -w /data \
-              --entrypoint /usr/local/bin/ncmm \
-              ghcr.io/3899/ncmm:latest \
-              --home /data -c /data/config.yaml login cookie --format header "$C" -o fan1.json \
-              > data/login2.log 2>&1
-            RC=$?
-          fi
           set -e
-          rm -f data/fan1.header
           if [ "$RC" -ne 0 ]; then
-            echo "::warning::secondary login failed — fallback to main-only play"
+            echo "::warning::secondary login failed — main-only play"
             grep -v -iE 'cookie|music_u|token|password|authorization|songid|歌名|昵称' data/login2.log | tail -n 40 || true
             rm -f data/login2.log
-            python3 -c "from pathlib import Path;p=Path('data/config.yaml');t=p.read_text();p.write_text(t.replace('  secondary:\n    - \"./fan1.json\"','  secondary: []'))"
+            clear_secondary
             exit 0
           fi
           rm -f data/login2.log
-          if [ -f data/fan1.json ]; then
+          # 辅助默认 fan_<uid>.json
+          extra=$(find data -maxdepth 3 \( -name 'fan_*.json' -o -name 'fan1.json' -o -name 'temp_cookie.json' \) 2>/dev/null | head -5 || true)
+          echo "secondary cookie candidates: $(echo "$extra" | tr '\n' ' ')"
+          target=""
+          for f in $extra; do
+            case "$f" in
+              *cookie.json) continue ;;
+              *) target="$f"; break ;;
+            esac
+          done
+          if [ -z "$target" ]; then
+            # 任意非 main 的 json
+            target=$(find data -maxdepth 3 -name '*.json' ! -name 'cookie.json' 2>/dev/null | head -1 || true)
+          fi
+          if [ -n "$target" ] && [ -f "$target" ]; then
+            cp "$target" data/fan1.json
+            # 确保 config 指向 fan1
+            python3 <<'PY'
+          from pathlib import Path
+          import re
+          p = Path("data/config.yaml")
+          t = p.read_text(encoding="utf-8")
+          if '"./fan1.json"' not in t:
+              t = re.sub(r"secondary:\s*\[\]", 'secondary:\n    - "./fan1.json"', t, count=1)
+          p.write_text(t, encoding="utf-8")
+          print("secondary ready -> fan1.json")
+          PY
             echo "secondary login ok"
-          elif [ -f data/.ncmm/fan1.json ]; then
-            cp data/.ncmm/fan1.json data/fan1.json
-            echo "secondary login ok (from .ncmm)"
           else
-            # 可能写成 fan_<uid>.json
-            extra=$(find data -maxdepth 2 -name 'fan*.json' ! -name 'fan1.json' 2>/dev/null | head -1 || true)
-            if [ -n "$extra" ]; then
-              cp "$extra" data/fan1.json
-              echo "secondary login ok (renamed $(basename "$extra"))"
-            else
-              echo "::warning::secondary cookie file missing — main-only play"
-              python3 -c "from pathlib import Path;p=Path('data/config.yaml');t=p.read_text();p.write_text(t.replace('  secondary:\n    - \"./fan1.json\"','  secondary: []'))"
-            fi
+            echo "::warning::secondary file missing — main-only play"
+            clear_secondary
           fi
 
       - name: Resolve command
