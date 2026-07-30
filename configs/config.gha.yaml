@@ -3,9 +3,8 @@ version: 1.1.11
 
 accounts:
   main: "./cookie.json"
-  # 辅助号 cookie 由 Actions 运行时写入 fan1.json（Secret），不进 git
-  secondary:
-    - "./fan1.json"
+  # 辅助号仅在 Actions 登录成功后注入 fan1.json；默认空，失败则主号自刷
+  secondary: []
   antiCheatTokens:
     "./cookie.json": ""
 

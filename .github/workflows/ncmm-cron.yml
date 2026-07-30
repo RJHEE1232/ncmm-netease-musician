@@ -95,13 +95,19 @@ jobs:
           )
           if n != 1:
               raise SystemExit("failed to inject playids.ids")
-          if not os.environ.get("SECONDARY_MUSIC_U"):
-              t2 = t2.replace(
-                  "  secondary:\n    - \"./fan1.json\"",
-                  "  secondary: []",
-              )
+          # 强制空 secondary；辅助登录成功后再写入 fan1
+          t2 = re.sub(
+              r"secondary:\s*(?:\[\]|
+(?:\s*-\s*\"[^\"]+\"\s*
+?)+)",
+              "secondary: []
+",
+              t2,
+              count=1,
+          )
+          t2 = t2.replace("enableMain: false", "enableMain: true", 1)
           p.write_text(t2, encoding="utf-8")
-          print("playids injected from secret (not printed)")
+          print("playids injected; secondary starts empty")
           PY
 
       - name: Login main
@@ -142,23 +148,26 @@ jobs:
         run: |
           set +x
           clear_secondary() {
-            python3 <<'PY'
+            python3 - <<'PY'
           from pathlib import Path
           import re
           p = Path("data/config.yaml")
           t = p.read_text(encoding="utf-8")
-          t2 = re.sub(
-              r"secondary:\s*\n(?:\s*-\s*\"[^\"]+\"\s*\n?)+",
-              "secondary: []\n",
+          t = re.sub(
+              r"secondary:\s*(?:\[\]|
+(?:\s*-\s*\"[^\"]+\"\s*
+?)+)",
+              "secondary: []
+",
               t,
               count=1,
           )
-          # play 允许主号兜底
-          t2 = t2.replace("enableMain: false", "enableMain: true", 1)
-          p.write_text(t2, encoding="utf-8")
-          print("config: secondary cleared, enableMain play fallback")
+          t = t.replace("enableMain: false", "enableMain: true")
+          p.write_text(t, encoding="utf-8")
+          print("config: secondary cleared, main play enabled")
           PY
           }
+
           if [ -z "${SECONDARY_MUSIC_U}" ]; then
             echo "skip secondary login"
             clear_secondary
