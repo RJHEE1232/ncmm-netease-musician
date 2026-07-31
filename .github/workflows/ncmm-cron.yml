@@ -30,7 +30,7 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     # forks without secrets fail at Guard; no hardcoded owner name
     if: github.event_name != 'pull_request'
 
