@@ -31,7 +31,8 @@ jobs:
   run:
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    if: github.repository == '<owner>/ncmm-netease-musician'
+    # forks without secrets fail at Guard; no hardcoded owner name
+    if: github.event_name != 'pull_request'
 
     steps:
       - name: Checkout
