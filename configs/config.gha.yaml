@@ -1,5 +1,5 @@
 # GitHub Actions 配置：单次少刷（每首真实等待整曲时长，多了会超时）
-version: 1.1.11
+version: 1.1.12
 
 accounts:
   main: "./cookie.json"
