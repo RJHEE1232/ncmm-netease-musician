@@ -18,6 +18,7 @@ on:
           - sign
           - musician-vip
           - musician-sign
+          - note
 
 permissions:
   contents: read
@@ -130,7 +131,7 @@ jobs:
           set +x
           CMD="${{ steps.cmd.outputs.value }}"
           case "$CMD" in
-            musician|task|sign|musician-vip|musician-sign) ;;
+            musician|task|sign|musician-vip|musician-sign|note) ;;
             *) echo "::error::invalid command"; exit 1 ;;
           esac
           echo "running: ncmm $CMD (redacted)"

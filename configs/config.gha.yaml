@@ -79,17 +79,14 @@ mixPlay:
   countTarget: false
 
 note:
+  # 纯文字（type 35），不传图；发完秒删，减少主页曝光
+  # 说明：ncmm 未暴露「仅自己可见」配置项，API 默认公开；用 autoDelete 近似“不留痕迹”
   titles:
-    - "今日音乐分享"
-    - "音乐人的日常"
-    - "分享好听的歌"
+    - "1"
   messages:
-    - "穿梭在拥挤的人潮里，耳机隔开外界的喧闹，一首喜欢的歌，就是奔波路上最安稳的小港湾。"
-    - "生活难免有疲惫和委屈，好在总有动听的音乐相伴，一点点抚平心底积攒下来的负面情绪。"
-    - "暂时抛开生活里的琐碎压力，寻一处角落静静听歌，让思绪跟着音符漫无目的地自由飘荡。"
-  imageUrls:
-    - "https://picsum.photos/800/600"
-  type: 39
+    - "1"
+  imageUrls: []
+  type: 35
   autoDelete: true
 
 dailySongShare:
