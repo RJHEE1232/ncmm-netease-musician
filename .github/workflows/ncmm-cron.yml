@@ -139,8 +139,8 @@ jobs:
           # ncmm note publishes PUBLIC by default, so we never call it here.
           if [ "$CMD" = "note" ]; then
             echo "running: publish_private_note (self-only note)"
-            if ! python3 -m pip install --quiet --disable-pip-version-check --break-system-packages pycryptodome requests; then
-              python3 -m pip install --quiet --disable-pip-version-check --user pycryptodome requests
+            if ! python3 -m pip install --quiet --disable-pip-version-check --break-system-packages pycryptodome requests brotli; then
+              python3 -m pip install --quiet --disable-pip-version-check --user pycryptodome requests brotli
             fi
             set +e
             python3 scripts/publish_private_note.py --cookie data/cookie.json 2>&1 \

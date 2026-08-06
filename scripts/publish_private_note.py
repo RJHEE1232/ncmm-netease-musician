@@ -192,7 +192,7 @@ class EapiClient:
             "Host": host,
             "Connection": "keep-alive",
             "Accept": "*/*",
-            "Accept-Encoding": "gzip, deflate, br",
+            "Accept-Encoding": "gzip, deflate",  # no br: requests cannot decode brotli; server then uses gzip
             "Content-Type": "application/x-www-form-urlencoded",
             "Accept-language": "zh-CN,zh-Hans;q=0.9",
             "Referer": "https://music.163.com",
@@ -226,6 +226,37 @@ class EapiClient:
                     time.sleep(1.5 * attempt)
         raise last  # type: ignore[misc]
 
+    def _decode_body(self, resp: requests.Response) -> bytes:
+        """Return HTTP-decompressed body.
+
+        requests already decodes gzip/deflate; guard against brotli (br) just
+        in case the server sends it despite Accept-Encoding lacking br."""
+        enc = (resp.headers.get("Content-Encoding") or "").lower()
+        body = resp.content
+        if "gzip" in enc and body[:2] == b"\x1f\x8b":
+            try:
+                body = gzip.decompress(body)
+            except Exception:
+                pass
+        elif "br" in enc:
+            try:
+                import brotli
+            except ImportError:
+                try:
+                    import brotlicffi as brotli
+                except ImportError:
+                    brotli = None
+            if brotli is None:
+                raise RuntimeError(
+                    "server returned Content-Encoding: br but brotli is not installed; "
+                    "pip install brotli or keep Accept-Encoding: gzip, deflate"
+                )
+            try:
+                body = brotli.decompress(body)
+            except Exception:
+                pass  # already decoded by requests
+        return body
+
     def eapi_post(self, url: str, obj: object, retries: int | None = None) -> dict:
         host = urllib.parse.urlparse(url).hostname or ""
         old = self.retries
@@ -239,12 +270,14 @@ class EapiClient:
                     resp = self._request(
                         "POST", url, host, data=f"params={params}".encode("ascii")
                     )
-                    body = eapi_decrypt(resp.content)
+                    body = eapi_decrypt(self._decode_body(resp))
                     try:
                         return json.loads(body)
-                    except json.JSONDecodeError as e:
+                    except ValueError as e:
                         raise RuntimeError(
-                            f"bad JSON after decrypt (http {resp.status_code}): {body[:200]!r}"
+                            f"bad response after decrypt (http {resp.status_code}, "
+                            f"Content-Encoding={resp.headers.get('Content-Encoding')!r}): "
+                            f"{body[:120]!r}"
                         ) from e
                 except (requests.RequestException, RuntimeError) as e:
                     last_err = e
