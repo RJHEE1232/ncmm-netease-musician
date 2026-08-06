@@ -125,7 +125,7 @@ jobs:
             echo "value=task" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Run ncmm (redacted live logs)
+      - name: Run command (redacted live logs)
         env:
           SONG_IDS: ${{ secrets.SONG_IDS }}
         run: |
@@ -135,6 +135,25 @@ jobs:
             musician|task|sign|musician-vip|musician-sign|note) ;;
             *) echo "::error::invalid command"; exit 1 ;;
           esac
+          # note = private self-only image-text post via our own EAPI script.
+          # ncmm note publishes PUBLIC by default, so we never call it here.
+          if [ "$CMD" = "note" ]; then
+            echo "running: publish_private_note (self-only note)"
+            if ! python3 -m pip install --quiet --disable-pip-version-check --break-system-packages pycryptodome requests; then
+              python3 -m pip install --quiet --disable-pip-version-check --user pycryptodome requests
+            fi
+            set +e
+            python3 scripts/publish_private_note.py --cookie data/cookie.json 2>&1 \
+              | python3 scripts/redact_logs.py
+            STATUS=${PIPESTATUS[0]}
+            set -e
+            if [ "${STATUS}" -ne 0 ]; then
+              echo "::error::publish_private_note exit=${STATUS}"
+              exit "${STATUS}"
+            fi
+            echo "note publish finished ok"
+            exit 0
+          fi
           echo "running: ncmm $CMD (redacted)"
           set +e
           docker run --rm             -v "$PWD/data:/data"             -w /data             --entrypoint /usr/local/bin/ncmm             ghcr.io/3899/ncmm:latest             --home /data -c /data/config.yaml "$CMD" 2>&1             | python3 scripts/redact_logs.py

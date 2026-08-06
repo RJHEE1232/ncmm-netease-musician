@@ -17,6 +17,7 @@
 | Issue / PR | 禁止粘贴 cookie、手机号、抓包全文 |
 | Fork | fork **带不走** 你的 Secrets；别人跑的是他们自己的空 secret |
 | 日志 | workflow 已 `::add-mask::` + `scripts/redact_logs.py` 过滤（曲目/歌名/昵称/uid 打码）；仍避免在 `echo` 里拼 secret |
+| 发帖 | 自研 `scripts/publish_private_note.py`：`privacySetting=1` 仅自己可见；脚本不打印 cookie 原文（只打长度），输出同样过 redact_logs.py |
 
 ## Secrets 配置
 

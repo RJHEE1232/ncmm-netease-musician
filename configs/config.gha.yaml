@@ -79,16 +79,16 @@ mixPlay:
   countTarget: false
 
 note:
-  # 纯文字（type 35），不传图；发完秒删，减少主页曝光
-  # 说明：ncmm 未暴露「仅自己可见」配置项，API 默认公开；用 autoDelete 近似“不留痕迹”
+  # Actions 发帖已改用 scripts/publish_private_note.py（仅自己可见，不走 ncmm note）。
+  # 以下仅供本地手动 `ncmm note` 参考：type 39 = 图文；注意 ncmm 上游默认按公开发布。
   titles:
     - "1"
   messages:
     - "1"
-  imageUrls: []
-  type: 35
-  autoDelete: true
-
+  imageUrls:
+    - "https://picsum.photos/800/600"
+  type: 39
+  autoDelete: false
 dailySongShare:
   enableMain: false
   enableSecondaries: true

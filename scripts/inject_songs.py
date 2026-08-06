@@ -45,46 +45,5 @@ t2 = "".join(out).replace("enableMain: false", "enableMain: true")
 
 # Pin version so AutoUpgrade does not merge remote default title pools
 t2 = re.sub(r"(?m)^version:.*$", "version: 1.1.12", t2, count=1)
-
-# FORCE plain-text note: title/body "1", no images (type 35)
-note_lines = [
-    "note:\n",
-    '  titles:\n',
-    '    - "1"\n',
-    "  messages:\n",
-    '    - "1"\n',
-    "  imageUrls: []\n",
-    "  type: 35\n",
-    "  autoDelete: true\n",
-]
-note_block = "".join(note_lines)
-
-# replace note section line-by-line (avoid fragile multiline regex)
-lines = t2.splitlines(True)
-out = []
-i = 0
-replaced = False
-while i < len(lines):
-    if (not replaced) and lines[i].startswith("note:"):
-        out.append(note_block)
-        if not note_block.endswith("\n"):
-            out.append("\n")
-        i += 1
-        while i < len(lines):
-            # stop at next top-level key (no leading space)
-            if lines[i].strip() and not lines[i].startswith((" ", "\t")):
-                break
-            i += 1
-        replaced = True
-        continue
-    out.append(lines[i])
-    i += 1
-t2 = "".join(out)
-if not replaced:
-    t2 = t2.rstrip() + "\n\n" + note_block + "\n"
-
-if "type: 35" not in t2 or '- "1"' not in t2:
-    raise SystemExit("failed to force plain note block")
-
 p.write_text(t2, encoding="utf-8")
-print("config prepared (secondary empty; note forced plain-1; ver 1.1.12)")
+print("config prepared (secondary empty; ver 1.1.12; note untouched - Actions uses publish_private_note.py)")
