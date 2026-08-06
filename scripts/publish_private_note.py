@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish a private (self-only visible) image-text note (动态/笔记) to NetEase Cloud Music.
+"""Publish a private (self-only visible) note (动态/笔记) to NetEase Cloud Music.
 
 Why not ``ncmm note``? The upstream hardcodes privacySetting="0" (public) and
 overwrites socialSpaceVisible to 1, so a note published through ncmm is always
@@ -7,7 +7,7 @@ public. This script reimplements the EAPI flow used by the mobile client and
 publishes with privacySetting="1" (self-only):
 
   EAPI encrypt (AES-128-ECB + PKCS7, hex uppercase)  ->  form `params=<HEX>`
-  image upload: NOS token alloc -> PUT to upload node -> event img info
+  image upload (optional, --image-url): NOS token alloc -> PUT -> event img info
   publish:      POST /eapi/note/share/friends/resource
   verify:       check privacySetting in publish response + /eapi/event/get
 
@@ -66,7 +66,11 @@ def go_json_dumps(obj: object) -> str:
 
 def eapi_params(url: str, obj: object) -> str:
     """Encrypt an EAPI request body; returns the `params` value (HEX upper)."""
-    api_url = url.replace("eapi", "api", 1)  # only first occurrence, as upstream
+    # Plaintext must use the URL *path* (e.g. /api/nos/token/alloc), NOT the
+    # full URL. Using the full URL makes EAPI routes return code=404
+    # ("interface not found"). urlparse keeps bare paths like "/test/url" unchanged.
+    path = urllib.parse.urlparse(url).path
+    api_url = path.replace("eapi", "api", 1)  # only first occurrence, as upstream
     data = go_json_dumps(obj)
     digest = hashlib.md5(EAPI_SLAT.format(api_url, data).encode("utf-8")).hexdigest()
     text = f"{api_url}-{EAPI_SEP}-{data}-{EAPI_SEP}-{digest}"
@@ -435,7 +439,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--cookie", default="data/cookie.json", help="ncmm login cookie jar (Resty json)")
     ap.add_argument("--image-url", action="append", default=[],
-                    help="image URL(s); repeatable (default: https://picsum.photos/800/600)")
+                    help="image URL(s); repeatable (optional - omit for pure-text note)")
     ap.add_argument("--title", default="1", help="note title (default: 1)")
     ap.add_argument("--msg", default="1", help="note body (default: 1)")
     ap.add_argument("--no-verify", action="store_true", help="skip privacy re-check via /eapi/event/get")
@@ -457,7 +461,9 @@ def main() -> int:
     client = EapiClient(entries)
     print(f"[publish] cookie ok: entries={len(entries)} music_u={mask(client.music_u)}")
 
-    urls = args.image_url or ["https://picsum.photos/800/600"]
+    # Pure-text note by default (pics="[]", no image upload). Images only
+    # when --image-url is explicitly given.
+    urls = list(args.image_url)
     pics_json = "[]"
     if urls:
         pic_list = []

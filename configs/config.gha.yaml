@@ -79,15 +79,14 @@ mixPlay:
   countTarget: false
 
 note:
-  # Actions 发帖已改用 scripts/publish_private_note.py（仅自己可见，不走 ncmm note）。
-  # 以下仅供本地手动 `ncmm note` 参考：type 39 = 图文；注意 ncmm 上游默认按公开发布。
+  # Actions 发帖已改走 scripts/publish_private_note.py（仅自己可见，默认纯文字“1”不传图）。
+  # 以下仅供本地手动 `ncmm note` 参考：type 35 = 纯文字；type 39 = 图文；注意 ncmm 上游默认公开发布。
   titles:
     - "1"
   messages:
     - "1"
-  imageUrls:
-    - "https://picsum.photos/800/600"
-  type: 39
+  imageUrls: []
+  type: 35
   autoDelete: false
 dailySongShare:
   enableMain: false
