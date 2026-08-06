@@ -461,10 +461,11 @@ def main() -> int:
     client = EapiClient(entries)
     print(f"[publish] cookie ok: entries={len(entries)} music_u={mask(client.music_u)}")
 
-    # Pure-text note by default (pics="[]", no image upload). Images only
+    # Pure-text note by default: do NOT send a "pics" key at all (matches the
+    # App / upstream EventPublishReq omitempty behavior). Images are only sent
     # when --image-url is explicitly given.
     urls = list(args.image_url)
-    pics_json = "[]"
+    pics_json = ""
     if urls:
         pic_list = []
         for i, url in enumerate(urls):
@@ -481,14 +482,29 @@ def main() -> int:
         "msg": args.msg,
         "type": "noresource",
         "uuid": secrets.token_hex(16),
-        "pics": pics_json,
         "addComment": False,
         "privacySetting": "1",
-        "socialSpaceVisible": 0,
+        "socialSpaceVisible": 1,
     }
+    if urls:
+        publish_body["pics"] = pics_json
     print(f"[publish] sending private note: title={args.title!r} msg={args.msg!r} images={len(urls)} privacy=1")
-    reply = client.eapi_post(PUBLISH_URL, publish_body)
-    code = reply.get("code")
+    # code=250 is a transient risk-control / frequency-limit response; retry a
+    # few times with a fresh uuid + backoff before giving up.
+    max_attempts = 4
+    retry_delay = 30
+    reply = None
+    last_code = None
+    for attempt in range(1, max_attempts + 1):
+        if attempt > 1:
+            publish_body["uuid"] = secrets.token_hex(16)
+            print(f"[publish] retry {attempt}/{max_attempts} after code={last_code} (fresh uuid, sleep {retry_delay}s)")
+            time.sleep(retry_delay)
+        reply = client.eapi_post(PUBLISH_URL, publish_body)
+        last_code = reply.get("code")
+        if last_code == 200 or last_code != 250 or attempt == max_attempts:
+            break
+    code = last_code
     if code != 200:
         print(f"error: publish failed code={code} msg={reply.get('msg')} "
               f"(known risk: Actions IP may hit 250 risk control)", file=sys.stderr)
