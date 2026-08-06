@@ -23,6 +23,7 @@ import argparse
 import gzip
 import hashlib
 import json
+import os
 import secrets
 import sys
 import time
@@ -49,6 +50,13 @@ EAPI_KEY = b"e82ckenh8dichen8"
 EAPI_SEP = "36cd479b6b5"
 EAPI_SLAT = "nobody{}use{}md5forencrypt"
 EAPI_UA = "NeteaseMusic 9.4.95/6806 (iPhone; iOS 16.6.1; zh_CN)"
+
+# Community-proven workaround for NetEase IP-based risk control (code 250 / 429)
+# when the caller egresses from an overseas IP (GitHub Actions runners are in
+# the US). Sending a domestic X-Real-IP makes the WAF geolocate us in China.
+# Override via env NOTE_X_REAL_IP if needed (no code change).
+DEFAULT_X_REAL_IP = "112.111.112.113"
+
 
 
 def go_json_dumps(obj: object) -> str:
@@ -189,6 +197,7 @@ class EapiClient:
         self.osver = jar_value(entries, "osver")
         self.appver = jar_value(entries, "appver") or "9.4.95"
         self.buildver = jar_value(entries, "buildver") or "6806"
+        self.x_real_ip = os.environ.get("NOTE_X_REAL_IP") or DEFAULT_X_REAL_IP
         self.session = requests.Session()
 
     def _headers(self, host: str) -> dict:
@@ -200,6 +209,7 @@ class EapiClient:
             "Content-Type": "application/x-www-form-urlencoded",
             "Accept-language": "zh-CN,zh-Hans;q=0.9",
             "Referer": "https://music.163.com",
+            "X-Real-IP": self.x_real_ip,  # domestic IP: bypass WAF geo/risk-control 250
             "User-Agent": EAPI_UA,
             "Cookie": self.cookie_header,
             "X-Client-Enc-State": "ENCRYPTED",
