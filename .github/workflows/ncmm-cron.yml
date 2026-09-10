@@ -85,12 +85,19 @@ jobs:
             *MUSIC_U=*) C="${MUSIC_U}" ;;
             *) C="MUSIC_U=${MUSIC_U}" ;;
           esac
-          docker run --rm             -v "$PWD/data:/data"             -w /data             --entrypoint /usr/local/bin/ncmm             ghcr.io/3899/ncmm:latest             --home /data -c /data/config.yaml login cookie --format header "$C" -m             > data/login.log 2>&1 || {
+          docker run --rm \
+            -v "$PWD/data:/data" \
+            -w /data \
+            --entrypoint /usr/local/bin/ncmm \
+            ghcr.io/3899/ncmm:latest \
+            --home /data -c /data/config.yaml login cookie --format header "$C" -m --no-config-write \
+            > data/login.log 2>&1 || {
               echo "::error::main login failed"
               grep -v -iE 'cookie|music_u|token|password|authorization|songid|歌名|昵称' data/login.log | tail -n 80 || true
               rm -f data/login.log data/cookie.json || true
               exit 1
             }
+          sudo chown -R $(id -u):$(id -g) data
           if [ ! -f data/cookie.json ]; then
             found=$(find data -name 'cookie.json' 2>/dev/null | head -1 || true)
             if [ -n "$found" ]; then cp "$found" data/cookie.json; fi
