@@ -15,6 +15,7 @@ on:
         options:
           - musician
           - task
+          - playids
           - sign
           - musician-vip
           - musician-sign
@@ -139,7 +140,7 @@ jobs:
           set +x
           CMD="${{ steps.cmd.outputs.value }}"
           case "$CMD" in
-            musician|task|sign|musician-vip|musician-sign|note) ;;
+            musician|task|playids|sign|musician-vip|musician-sign|note) ;;
             *) echo "::error::invalid command"; exit 1 ;;
           esac
           # note = private self-only image-text post via our own EAPI script.

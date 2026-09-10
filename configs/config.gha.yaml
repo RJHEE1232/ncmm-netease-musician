@@ -10,7 +10,7 @@ accounts:
 
 task:
   sign: true
-  playids: false
+  playids: true
   musician-sign: true
   # 月度 VIP 进阶（发笔记、刷播放）—— HF 部署必须打开
   musician-vip: true
@@ -30,6 +30,7 @@ task:
     - musician-sign
   slow_tasks:
     - musician-vip
+    - playids
 
 network:
   debug: false
